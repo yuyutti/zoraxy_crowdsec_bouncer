@@ -1,4 +1,11 @@
-## v1.2.4-1 (2026-10-30, local changes; release not published)
+## v1.2.4-2 (2026-10-30)
+
+- Change the optional evil page text to two lines: "I'm a teapot. You are evil."
+  and "I refuse to serve you." Keep HTTP status configuration and the 666 Evil heading.
+- Align binary metadata, download URLs and distribution examples with v1.2.4-2.
+- Preserve the default HTTP 403 Forbidden response, fork Plugin ID and existing configs.
+
+## v1.2.4-1 (2026-10-30)
 
 - Harden resolved client IP and legacy proxy trust boundaries, including mapped IPv6.
 - Expire cached decisions locally; replace successful full snapshots on startup/reconnect.

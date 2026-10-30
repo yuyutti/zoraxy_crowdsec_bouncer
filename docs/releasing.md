@@ -12,8 +12,8 @@ for comparison and MIT attribution. No new fork is needed.
 2. Open the CI run for the exact source commit. Require all jobs to succeed.
    Inspect the seven uploaded binary/checksum artifacts. Do not create a version
    tag for a failing or unverified commit.
-3. Check this fork's Tags and Releases for an existing version. The initial
-   source version is v1.2.4-1. Do not overwrite an existing tag or its assets.
+3. Check this fork's Tags and Releases for an existing version. The current
+   source version is v1.2.4-2. Do not overwrite an existing tag or its assets.
 4. After verification, create/push the exact version tag at that verified SHA.
    Alternatively, once CD.yml is present on main, use Actions -> Publish fork
    release -> Run workflow, select the source branch/commit, enter the exact
@@ -30,7 +30,7 @@ for comparison and MIT attribution. No new fork is needed.
    checksum tool (for example PowerShell Get-FileHash -Algorithm SHA256).
 
 Initial evaluation download base:
-https://github.com/yuyutti/zoraxy_crowdsec_bouncer/releases/download/v1.2.4-1
+https://github.com/yuyutti/zoraxy_crowdsec_bouncer/releases/download/v1.2.4-2
 
 The evaluation .releaseurl uses that exact tag. GitHub prereleases are not stable
 latest releases. The UI's stable update channel excludes every prerelease and
@@ -38,7 +38,7 @@ unpublished draft; an empty stable channel does not suggest upstream updates.
 A later stable publication can use the manual workflow with prerelease disabled;
 its tag still must match source and every validation must pass. The full version
 is exposed by -introspect and the version API; SDK numeric compatibility fields
-remain 1/2/4 for v1.2.4-1.
+remain 1/2/4 for v1.2.4-2.
 
 All distribution builds preserve the upstream asset naming/platform format:
 Linux 386, amd64, arm/v7, arm64, mipsle and riscv64; Windows amd64.

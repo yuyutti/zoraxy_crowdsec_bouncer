@@ -1,4 +1,4 @@
-# CrowdSec Bouncer - yuyutti fork v1.2.4-1
+# CrowdSec Bouncer - yuyutti fork v1.2.4-2
 api_key: <CROWDSEC_BOUNCER_API_KEY>
 agent_url: http://127.0.0.1:8080
 stream_update_frequency: 10s

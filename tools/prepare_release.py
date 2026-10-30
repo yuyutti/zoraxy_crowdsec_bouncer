@@ -54,6 +54,7 @@ notes = [
     'Actions run: https://github.com/yuyutti/zoraxy_crowdsec_bouncer/actions/runs/' + os.environ['GITHUB_RUN_ID'],
     '',
     'Default: HTTP 403 with exactly Forbidden. Explicit evil configuration: HTTP 418 with 666 Evil.',
+    "Evil page text: I'm a teapot. You are evil. / I refuse to serve you.",
     'This release does not deploy or restart production Zoraxy.',
     'Metadata asset names: introspect.json corresponds to .introspect; releaseurl.txt corresponds to .releaseurl.',
     'Migrate the fork Plugin ID and route tags using docs/migration.md; retain your existing config and API key.',

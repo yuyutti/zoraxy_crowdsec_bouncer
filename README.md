@@ -1,8 +1,8 @@
-# yuyutti fork v1.2.4-1
+# yuyutti fork v1.2.4-2
 
 This is the [yuyutti fork](https://github.com/yuyutti/zoraxy_crowdsec_bouncer) of
 [Anthony Rubick's upstream project](https://github.com/AnthonyMichaelTDM/zoraxy_crowdsec_bouncer).
-The MIT license and original attribution are retained. This revision is **1.2.4-1**, not 1.2.5.
+The MIT license and original attribution are retained. This revision is **1.2.4-2**, not 1.2.5.
 Release assets are published only after the matching GitHub Actions verification, Docker E2E and all distribution builds succeed. Initial evaluation builds use the exact tag URL, not the stable latest endpoint.
 
 The default block response is HTTP **403** with exactly **Forbidden**, without a newline.
@@ -154,14 +154,14 @@ Then, copy the link to the latest binary from the [releases page](https://github
 ```bash
 cd /opt/zoraxy/plugins/zoraxycrowdsecbouncer
 # wget <LINK_TO_LATEST_BINARY>
-wget https://github.com/yuyutti/zoraxy_crowdsec_bouncer/releases/download/v1.2.4-1/zoraxycrowdsecbouncer_linux_amd64 -O zoraxycrowdsecbouncer
+wget https://github.com/yuyutti/zoraxy_crowdsec_bouncer/releases/download/v1.2.4-2/zoraxycrowdsecbouncer_linux_amd64 -O zoraxycrowdsecbouncer
 chmod +x zoraxycrowdsecbouncer
 ```
 
 Do the same for the `config.yaml` file:
 
 ```bash
-wget https://github.com/yuyutti/zoraxy_crowdsec_bouncer/releases/download/v1.2.4-1/config.yaml
+wget https://github.com/yuyutti/zoraxy_crowdsec_bouncer/releases/download/v1.2.4-2/config.yaml
 ```
 
 ### From Source

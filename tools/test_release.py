@@ -20,7 +20,7 @@ class ReleaseIdentityTests(unittest.TestCase):
         self.addCleanup(os.chdir, self.source)
 
     def test_exact_fork_metadata(self):
-        self.assertEqual(source_version(), 'v1.2.4-1')
+        self.assertEqual(source_version(), 'v1.2.4-2')
 
     def test_latest_endpoint_rejected_for_evaluation(self):
         Path('.releaseurl').write_text('https://github.com/yuyutti/zoraxy_crowdsec_bouncer/releases/latest/download\n', encoding='utf-8')

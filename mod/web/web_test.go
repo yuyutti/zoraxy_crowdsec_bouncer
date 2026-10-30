@@ -64,7 +64,7 @@ func TestUpdateCacheTTLBackoffAndOrdering(t *testing.T) {
 	if calls.Load() != 3 {
 		t.Fatal("cache never refreshed")
 	}
-	if compareVersions("v1.2.4-2", info.VERSION_STRING) <= 0 || compareVersions("v1.2.3", info.VERSION_STRING) >= 0 {
+	if compareVersions("v1.2.4-10", "v1.2.4-2") <= 0 || compareVersions("v1.2.3", info.VERSION_STRING) >= 0 {
 		t.Fatal("fork version ordering")
 	}
 }

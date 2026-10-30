@@ -22,7 +22,7 @@ func NewBlockHandler(cfg config.BlockResponseConfig, configPath string) (http.Ha
 	}
 	body, contentType := []byte("Forbidden"), "text/plain; charset=utf-8"
 	if cfg.Page == "evil" {
-		body = []byte(fmt.Sprintf(`<!doctype html><html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width"><title>666 Evil</title><style>body{background:#141018;color:#f9edf2;font:20px system-ui;text-align:center;padding:12vh 1rem}h1{font-size:4rem;color:#fa697e}</style><h1>666 Evil</h1><p>I'm a teapot.<br>I cannot serve you.</p><p>HTTP %d</p></html>`, cfg.StatusCode))
+		body = []byte(fmt.Sprintf(`<!doctype html><html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width"><title>666 Evil</title><style>body{background:#141018;color:#f9edf2;font:20px system-ui;text-align:center;padding:12vh 1rem}h1{font-size:4rem;color:#fa697e}</style><h1>666 Evil</h1><p>I'm a teapot. You are evil.<br>I refuse to serve you.</p><p>HTTP %d</p></html>`, cfg.StatusCode))
 		contentType = "text/html; charset=utf-8"
 	} else if cfg.Page == "custom" {
 		path := cfg.CustomPage

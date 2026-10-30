@@ -5,7 +5,7 @@ on:
     workflow_dispatch:
         inputs:
             version:
-                description: 'Exact source version/tag (for example v1.2.4-1)'
+                description: 'Exact source version/tag (for example v1.2.4-2)'
                 required: true
                 type: string
             prerelease:
