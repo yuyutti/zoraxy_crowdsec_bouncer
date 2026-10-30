@@ -100,6 +100,11 @@ func runMetricsSender(ctx context.Context, mh *metrics.MetricsHandler, interval 
 			return
 		case <-ticker.C:
 		}
+		// Cancellation and a ready tick may be selected in either order. Do
+		// not collect/send another window after shutdown has been requested.
+		if ctx.Err() != nil {
+			return
+		}
 		if pending == nil {
 			component := &models.RemediationComponentsMetrics{
 				Type:        info.BOUNCER_TYPE,
