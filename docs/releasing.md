@@ -24,7 +24,7 @@ for comparison and MIT attribution. No new fork is needed.
    It checks binary metadata and checksums, uploads a draft, verifies all uploaded
    assets and only then publishes. Failure leaves the Release unpublished.
 6. Confirm the Actions summary's Release link, full tag, source SHA, seven binary
-   names, individual SHA256 files, config.yaml, .introspect, .releaseurl, LICENSE,
+   names, individual SHA256 files, config.yaml, introspect.json, releaseurl.txt, LICENSE,
    SHA256SUMS and release-notes.md. SHA256SUMS covers the distributable files.
    Download the appropriate binary and compare its checksum using the PC's normal
    checksum tool (for example PowerShell Get-FileHash -Algorithm SHA256).
@@ -52,3 +52,9 @@ apply old and new plugins to the same route. Separate routes may use either ID;
 use distinct bouncer keys for concurrent consumers. Rollback restores the old
 binary/ID/group membership/tags and private config after stopping the fork.
 Publishing assets does not deploy or restart a production Zoraxy server.
+
+GitHub may rename assets with leading periods. The portable release asset names
+are `introspect.json` and `releaseurl.txt`; when installing these metadata files,
+save them as `.introspect` and `.releaseurl`. Their contents exactly match the
+source and the tested binary metadata. Binary names and config.yaml remain in
+the upstream format.

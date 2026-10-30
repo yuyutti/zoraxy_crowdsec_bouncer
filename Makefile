@@ -13,7 +13,7 @@ CROWDSEC_BOUNCER_NAME ?= zoraxy-crowdsec-bouncer-local
 .PHONY: help
 .PHONY: test vet bench
 .PHONY: test-env-onboarding test-env-ready
-.PHONY: test-env-up test-env-down test-env-logs test-env-status
+.PHONY: test-env-services test-env-up test-env-down test-env-logs test-env-status
 .PHONY: test-env-dirs test-env-build test-env-restart-zoraxy
 .PHONY: test-env-config-onboarding test-env-api-key test-env-config-ready
 .PHONY: test-env-zoraxy-proxy-rule test-env-zoraxy-plugin-groups test-env-zoraxy-config
@@ -50,8 +50,13 @@ test-env-ready: test-env-config-ready
 	$(MAKE) test-env-restart-zoraxy
 	$(MAKE) test-env-status
 
-test-env-up: test-env-build
-	$(COMPOSE) up -d crowdsec test_webserver zoraxy
+# Create the host-owned private plugin config before starting Zoraxy. Otherwise
+# the container's first-run onboarding file is root-owned mode 0600 on the host.
+test-env-services: test-env-build
+	$(COMPOSE) up -d crowdsec test_webserver
+
+test-env-up: test-env-services
+	$(COMPOSE) up -d zoraxy
 
 test-env-down:
 	$(COMPOSE) down
@@ -88,7 +93,7 @@ test-env-config-onboarding: test-env-dirs
 	@chmod 600 "$(PLUGIN_CONFIG)"
 	@echo "Wrote onboarding config to $(PLUGIN_CONFIG)"
 
-test-env-api-key: test-env-up
+test-env-api-key: test-env-services
 	@echo "Waiting for CrowdSec Local API to become ready..."
 	@ready=0; \
 	for i in $$(seq 1 30); do \
@@ -126,6 +131,7 @@ test-env-config-ready: test-env-dirs test-env-api-key
 	@echo "Wrote ready config to $(PLUGIN_CONFIG)"
 
 test-env-restart-zoraxy:
+	$(COMPOSE) up -d zoraxy
 	$(COMPOSE) restart zoraxy
 
 # These targets are used to generate some of the config files that Zoraxy expects

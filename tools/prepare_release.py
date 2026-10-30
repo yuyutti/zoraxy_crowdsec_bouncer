@@ -36,13 +36,16 @@ binary = directory / 'zoraxycrowdsecbouncer_linux_amd64'
 binary.chmod(0o755)
 actual = json.loads(subprocess.check_output([str(binary.resolve()), '-introspect']))
 assert actual == json.loads(Path('.introspect').read_text(encoding='utf-8-sig')), 'Built binary introspection mismatch'
-for name in ('config.yaml', '.introspect', '.releaseurl', 'LICENSE'):
-    shutil.copyfile(name, directory / name)
+# GitHub can strip leading periods from uploaded asset names. Keep source SDK
+# names intact and publish explicit portable names instead of relying on renames.
+metadata_assets = {'config.yaml': 'config.yaml', '.introspect': 'introspect.json', '.releaseurl': 'releaseurl.txt', 'LICENSE': 'LICENSE'}
+for source, name in metadata_assets.items():
+    shutil.copyfile(source, directory / name)
     (directory / (name + '.sha256')).write_text(digest(directory / name) + '  ' + name + '\n', encoding='utf-8')
 
 files = sorted(directory.iterdir(), key=lambda file: file.name)
 (directory / 'SHA256SUMS').write_text(''.join(digest(file) + '  ' + file.name + '\n' for file in files), encoding='utf-8')
-primary = ASSETS + ['config.yaml', '.introspect', '.releaseurl', 'LICENSE']
+primary = ASSETS + list(metadata_assets.values())
 notes = [
     '# ' + version,
     '',
@@ -52,6 +55,7 @@ notes = [
     '',
     'Default: HTTP 403 with exactly Forbidden. Explicit evil configuration: HTTP 418 with 666 Evil.',
     'This release does not deploy or restart production Zoraxy.',
+    'Metadata asset names: introspect.json corresponds to .introspect; releaseurl.txt corresponds to .releaseurl.',
     'Migrate the fork Plugin ID and route tags using docs/migration.md; retain your existing config and API key.',
     'CI requires isolated Zoraxy/CrowdSec dual-stack E2E on legacy and resolved-client-IP variants. A real Cloudflare route remains unverified.',
     '',
