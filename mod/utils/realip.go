@@ -1,95 +1,157 @@
 package utils
 
 import (
-	"fmt"
-	"net"
+	"errors"
+	"net/netip"
 	"strings"
 
-	"github.com/AnthonyMichaelTDM/zoraxycrowdsecbouncer/mod/zoraxy_plugin"
+	plugin "github.com/AnthonyMichaelTDM/zoraxycrowdsecbouncer/mod/zoraxy_plugin"
 	"github.com/sirupsen/logrus"
 )
 
-// GetRealIP extracts the real IP address from the request headers.
-// It checks for the `X-Real-IP`, `CF-Connecting-IP`, and `X-Forwarded-For` headers
-//
-// When isProxiedBehindCloudflare is true, `CF-Connecting-IP` is checked FIRST:
-// Cloudflare always sets it and overwrites any client-supplied value, whereas
-// `X-Real-IP` is stripped from client requests by Cloudflare and so can only
-// come from a proxy sitting between Cloudflare and Zoraxy (e.g. a WAF), which
-// sets it to its own peer address, i.e. a Cloudflare edge IP, not the visitor.
-//
-// # Arguments:
-//   - dsfr: The DynamicSniffForwardRequest object containing the request headers and remote
-//   - isProxiedBehindCloudflare: If true, it will prioritize the `CF-Connecting-IP` header
-//   - debug: If true, it will print extra debug information to the console
-func GetRealIP(logger *logrus.Logger, dsfr *zoraxy_plugin.DynamicSniffForwardRequest, isProxiedBehindCloudflare bool) (string, error) {
-	// Get the real IP address from the request
-	realIP := ""
+// Official network snapshot checked 2026-10-30. Update explicitly; no request I/O.
+var cloudflarePrefixes = mustPrefixes(strings.Fields(`173.245.48.0/20 103.21.244.0/22 103.22.200.0/22 103.31.4.0/22 141.101.64.0/18 108.162.192.0/18 190.93.240.0/20 188.114.96.0/20 197.234.240.0/22 198.41.128.0/17 162.158.0.0/15 104.16.0.0/13 104.24.0.0/14 172.64.0.0/13 131.0.72.0/22 2400:cb00::/32 2606:4700::/32 2803:f800::/32 2405:b500::/32 2405:8100::/32 2a06:98c0::/29 2c0f:f248::/32`))
 
-	// Check for the `X-Real-IP`, `CF-Connecting-IP`, and `X-Forwarded-For` headers
-	if headers := dsfr.Header; headers != nil {
-		// Behind Cloudflare, CF-Connecting-IP is the only header Cloudflare
-		// guarantees; check it before X-Real-IP (see function comment).
-		if isProxiedBehindCloudflare {
-			// Check for CF-Connecting-IP header
-			CF_Connecting_IP, err := ExtractHeader(headers, "CF-Connecting-IP", isProxiedBehindCloudflare)
-			if err != nil && isProxiedBehindCloudflare {
-				logger.Debugf("GetRealIP failed to extract CF-Connecting-IP for request with UUID %s: %v", dsfr.GetRequestUUID(), err)
-			} else if CF_Connecting_IP == "" {
-				logger.Debugf("GetRealIP got an empty string for CF-Connecting-IP for request with UUID %s", dsfr.GetRequestUUID())
-			} else if CF_Connecting_IP != "" {
-				// Use CF Connecting IP
-				realIP = CF_Connecting_IP
-				goto IPFound
-			}
-		}
-
-		// Check for X-Real-IP header, we don't really expect to see this so we won't log an error if it is not found
-		X_Real_IP, err := ExtractHeader(headers, "X-Real-IP", false)
-		if err == nil && X_Real_IP != "" {
-			// Use X-Real-IP header
-			realIP = X_Real_IP
-			goto IPFound
-		}
-
-		// Check for X-Forwarded-For header
-		// We take the first IP in the list, as it is the original client IP
-		X_Forwarded_For, err := ExtractHeader(headers, "X-Forwarded-For", true)
-		if err != nil {
-			logger.Debugf("GetRealIP failed to extract X-Forwarded-For for request with UUID %s: %v", dsfr.GetRequestUUID(), err)
-		} else if X_Forwarded_For == "" {
-			logger.Debugf("GetRealIP got an empty string for X-Forwarded-For for request with UUID %s", dsfr.GetRequestUUID())
-		} else if X_Forwarded_For != "" {
-			// Use X-Forwarded-For header
-			// We take the first IP in the list, as it is the original client IP
-			ips := strings.Split(X_Forwarded_For, ",")
-			if len(ips) > 0 {
-				realIP = strings.TrimSpace(ips[0])
-			}
-			goto IPFound
-		}
+func mustPrefixes(values []string) []netip.Prefix {
+	out := make([]netip.Prefix, 0, len(values))
+	for _, v := range values {
+		out = append(out, netip.MustParsePrefix(v))
 	}
-	// If no headers are found, we will use the RemoteAddr, if it is not empty
-	if dsfr.RemoteAddr != "" {
-		logger.Debugf("GetRealIP using RemoteAddr for request with UUID %s: %s", dsfr.GetRequestUUID(), dsfr.RemoteAddr)
-		realIP = dsfr.RemoteAddr
-	} else {
-		return "", fmt.Errorf("no valid IP address found in headers")
-	}
-IPFound:
-	realIP = strings.TrimSpace(realIP)
+	return out
+}
 
-	// extract the IP address from what is potentially a host:port format
-	ip, _, err := net.SplitHostPort(realIP)
+func ParseIP(raw string) (netip.Addr, error) {
+	raw = strings.TrimSpace(raw)
+	ip, err := netip.ParseAddr(raw)
 	if err != nil {
-		// If SplitHostPort fails, it means there is no port, so we can use the whole string as the IP
-		ip = realIP
+		ap, e := netip.ParseAddrPort(raw)
+		if e != nil {
+			return netip.Addr{}, errors.New("invalid client address")
+		}
+		ip = ap.Addr()
 	}
-
-	// Validate the IP address
-	if net.ParseIP(ip) == nil {
-		return "", fmt.Errorf("invalid IP address: %s", ip)
+	if ip.Zone() != "" || ip.IsUnspecified() || ip.IsMulticast() {
+		return netip.Addr{}, errors.New("unsupported client address")
 	}
+	return ip.Unmap(), nil
+}
 
-	return ip, nil
+type IPResolver struct {
+	Trusted          []netip.Prefix
+	CloudflareRelays []netip.Prefix
+	Cloudflare       bool
+}
+
+func contains(prefixes []netip.Prefix, ip netip.Addr) bool {
+	for _, p := range prefixes {
+		if p.Contains(ip) {
+			return true
+		}
+	}
+	return false
+}
+
+func singleHeader(headers map[string][]string, key string) (string, bool, error) {
+	var found bool
+	var value string
+	for k, values := range headers {
+		if !strings.EqualFold(k, key) {
+			continue
+		}
+		if found || len(values) != 1 || strings.TrimSpace(values[0]) == "" {
+			return "", true, errors.New("ambiguous forwarding header")
+		}
+		found, value = true, strings.TrimSpace(values[0])
+	}
+	return value, found, nil
+}
+
+// Resolve requires a private Zoraxy RPC path. Empty lists trust nobody.
+func (resolver IPResolver) Resolve(r *plugin.DynamicSniffForwardRequest) (string, error) {
+	if r == nil {
+		return "", errors.New("missing sniff request")
+	}
+	if r.ClientIP != "" {
+		ip, err := ParseIP(r.ClientIP)
+		return ip.String(), err
+	}
+	peer, err := ParseIP(r.RemoteAddr)
+	if err != nil {
+		return "", err
+	}
+	cf := resolver.Cloudflare && (contains(cloudflarePrefixes, peer) || contains(resolver.CloudflareRelays, peer))
+	if !cf && !contains(resolver.Trusted, peer) {
+		return peer.String(), nil
+	}
+	if cf {
+		value, present, err := singleHeader(r.Header, "CF-Connecting-IP")
+		if err != nil {
+			return "", err
+		}
+		if present {
+			ip, err := ParseIP(value)
+			if err != nil {
+				return "", err
+			}
+			// Cloudflare Pseudo IPv4 overwrite preserves the native IPv6 header.
+			if netip.MustParsePrefix("240.0.0.0/4").Contains(ip) {
+				v6, ok, e := singleHeader(r.Header, "CF-Connecting-IPv6")
+				if e != nil || !ok {
+					return "", errors.New("missing pseudo IPv4 original IPv6")
+				}
+				ip, err = ParseIP(v6)
+				if err != nil || !ip.Is6() {
+					return "", errors.New("invalid pseudo IPv4 original IPv6")
+				}
+			}
+			return ip.String(), nil
+		}
+		return "", errors.New("missing Cloudflare client address")
+	}
+	xff, hasXFF, err := singleHeader(r.Header, "X-Forwarded-For")
+	if err != nil {
+		return "", err
+	}
+	real, hasReal, err := singleHeader(r.Header, "X-Real-IP")
+	if err != nil {
+		return "", err
+	}
+	resolved := peer
+	if hasXFF {
+		parts := strings.Split(xff, ",")
+		if len(parts) > 32 {
+			return "", errors.New("too many proxy hops")
+		}
+		hops := make([]netip.Addr, len(parts))
+		for i, v := range parts {
+			hops[i], err = ParseIP(v)
+			if err != nil {
+				return "", err
+			}
+		}
+		for i := len(hops) - 1; i >= 0; i-- {
+			if !contains(resolver.Trusted, resolved) {
+				break
+			}
+			resolved = hops[i]
+		}
+		if contains(resolver.Trusted, resolved) {
+			return "", errors.New("all forwarded hops trusted; client ambiguous")
+		}
+	}
+	if hasReal {
+		ip, err := ParseIP(real)
+		if err != nil {
+			return "", err
+		}
+		if hasXFF && ip != resolved {
+			return "", errors.New("conflicting forwarding headers")
+		}
+		resolved = ip
+	}
+	return resolved.String(), nil
+}
+
+func GetRealIP(_ *logrus.Logger, r *plugin.DynamicSniffForwardRequest, cloudflare bool) (string, error) {
+	return (IPResolver{Cloudflare: cloudflare}).Resolve(r)
 }

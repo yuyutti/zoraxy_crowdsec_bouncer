@@ -3,7 +3,7 @@ package zoraxy_plugin
 import (
 	"fmt"
 	"net/http"
-	"sort"
+	"net/url"
 	"strings"
 )
 
@@ -58,48 +58,29 @@ func (p *PathRouter) staticCaptureServeHTTP(w http.ResponseWriter, r *http.Reque
 	capturePath := r.Header.Get("X-Zoraxy-Capture")
 	if capturePath != "" {
 		if p.enableDebugPrint {
-			fmt.Printf("Using capture path: %s\n", capturePath)
+			fmt.Println("Static capture selected")
 		}
 		originalURI := r.Header.Get("X-Zoraxy-Uri")
-		r.URL.Path = originalURI
+		parsed, err := url.ParseRequestURI(originalURI)
+		if err != nil {
+			http.Error(w, "Invalid request URI", http.StatusBadRequest)
+			return
+		}
+		r.URL, r.RequestURI = parsed, originalURI
 		if handler, ok := p.pathHandlers[capturePath]; ok {
 			handler.ServeHTTP(w, r)
 			return
 		}
 	}
+	if p.defaultHandler == nil {
+		http.NotFound(w, r)
+		return
+	}
 	p.defaultHandler.ServeHTTP(w, r)
 }
 
 func (p *PathRouter) PrintRequestDebugMessage(r *http.Request) {
-	if p.enableDebugPrint {
-		fmt.Printf("Capture Request with path: %s \n\n**Request Headers** \n\n", r.URL.Path)
-		keys := make([]string, 0, len(r.Header))
-		for key := range r.Header {
-			keys = append(keys, key)
-		}
-		sort.Strings(keys)
-		for _, key := range keys {
-			for _, value := range r.Header[key] {
-				fmt.Printf("%s: %s\n", key, value)
-			}
-		}
-
-		fmt.Printf("\n\n**Request Details**\n\n")
-		fmt.Printf("Method: %s\n", r.Method)
-		fmt.Printf("URL: %s\n", r.URL.String())
-		fmt.Printf("Proto: %s\n", r.Proto)
-		fmt.Printf("Host: %s\n", r.Host)
-		fmt.Printf("RemoteAddr: %s\n", r.RemoteAddr)
-		fmt.Printf("RequestURI: %s\n", r.RequestURI)
-		fmt.Printf("ContentLength: %d\n", r.ContentLength)
-		fmt.Printf("TransferEncoding: %v\n", r.TransferEncoding)
-		fmt.Printf("Close: %v\n", r.Close)
-		fmt.Printf("Form: %v\n", r.Form)
-		fmt.Printf("PostForm: %v\n", r.PostForm)
-		fmt.Printf("MultipartForm: %v\n", r.MultipartForm)
-		fmt.Printf("Trailer: %v\n", r.Trailer)
-		fmt.Printf("RemoteAddr: %s\n", r.RemoteAddr)
-		fmt.Printf("RequestURI: %s\n", r.RequestURI)
-
+	if p.enableDebugPrint && r != nil {
+		fmt.Println("Plugin request received")
 	}
 }

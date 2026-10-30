@@ -1,3 +1,25 @@
+## v1.2.4-2 (2026-10-30)
+
+- Change the optional evil page text to two lines: "I'm a teapot. You are evil."
+  and "I refuse to serve you." Keep HTTP status configuration and the 666 Evil heading.
+- Align binary metadata, download URLs and distribution examples with v1.2.4-2.
+- Preserve the default HTTP 403 Forbidden response, fork Plugin ID and existing configs.
+
+## v1.2.4-1 (2026-10-30)
+
+- Harden resolved client IP and legacy proxy trust boundaries, including mapped IPv6.
+- Expire cached decisions locally; replace successful full snapshots on startup/reconnect.
+- Separate runtime readiness from configuration completeness and retain onboarding UI.
+- Correct metrics totals/deltas, cap label cardinality, and retain failed usage payloads.
+- Bound/cache fork update checks, redact credentials, and await UI requests safely.
+- Add optional evil/custom block pages while preserving exact default 403 Forbidden.
+- Harden embedded SDK paths, payload sizes, development roots and server shutdown.
+- Repair parallel Make dependencies, bind test ports to loopback, remove Docker socket,
+  and require reusable CI before release builds; generated releases remain drafts.
+- Use a fork Plugin ID and update origin, preserve MIT attribution and module imports.
+- Upgrade Go to 1.26.10 and x/net/text/sys/sync based on govulncheck findings.
+- Add regression/race/fuzz/UI tests and isolated dual-stack E2E runner instructions.
+
 # Changelog
 
 ## v1.2.4

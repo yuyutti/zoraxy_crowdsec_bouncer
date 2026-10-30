@@ -1,5 +1,10 @@
-# various utilities and tools for development
+# Development tools
 
-## standalone_ui/main.go
+`go run ./tools/standalone_ui.go` serves a loopback-only UI preview on port 3000.
+It does not start the bouncer, contact LAPI or block requests. The UI state is
+explicitly `preview`; this is not protection acceptance evidence.
 
-A standalone version of the WebUI that can be run independently of the main application, usefull for testing and development purposes.
+`check_introspection.py` compares the executable metadata against `.introspect`.
+`ui.test.cjs` exercises actual UI JavaScript with an injected DOM/fetch test double.
+`e2e.py` runs the isolated dual-stack Docker acceptance sequence after `make test-env-ready`.
+See [testing instructions](../docs/testing.md) for commands and unexecuted checks.

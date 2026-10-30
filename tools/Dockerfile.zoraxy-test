@@ -1,0 +1,10 @@
+# Only for the isolated E2E runner. Binary and entrypoint use the same pinned source.
+FROM golang:1.26.10-alpine AS builder
+RUN apk add --no-cache git
+ARG ZORAXY_REF=cde44510c6e4e22e2b108314cfa1b659eb4f550f
+RUN git clone --no-checkout https://github.com/tobychui/zoraxy.git /source && git -C /source checkout "$ZORAXY_REF"
+WORKDIR /source/src
+RUN CGO_ENABLED=0 go build -o /out/zoraxy .
+FROM zoraxydocker/zoraxy:v3.2.9
+COPY --from=builder /out/zoraxy /usr/local/bin/zoraxy
+COPY --from=builder /source/docker/entrypoint.py /opt/zoraxy/entrypoint.py

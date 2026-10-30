@@ -9,7 +9,7 @@ import (
 func str(value string) *string { return &value }
 
 func decision(id int64, scope, value, decisionType string) *models.Decision {
-	return &models.Decision{ID: id, Scope: str(scope), Value: str(value), Type: str(decisionType)}
+	return &models.Decision{ID: id, Scope: str(scope), Value: str(value), Type: str(decisionType), Duration: str("1h")}
 }
 
 func TestCacheAppliesNewAndDeletedDecisions(t *testing.T) {
@@ -19,13 +19,13 @@ func TestCacheAppliesNewAndDeletedDecisions(t *testing.T) {
 	rangeDecision := decision(2, "range", "2001:db8::/32", "ban")
 
 	cache.Apply(&models.DecisionsStreamResponse{New: []*models.Decision{ipDecision, maskedIPDecision, rangeDecision}})
-	if got := cache.GetBan("203.0.113.10"); got != ipDecision {
+	if got := cache.GetBan("203.0.113.10"); got == nil || got.ID != ipDecision.ID {
 		t.Fatalf("expected IP decision, got %#v", got)
 	}
-	if got := cache.GetBan("2001:db8::42"); got != rangeDecision {
+	if got := cache.GetBan("2001:db8::42"); got == nil || got.ID != rangeDecision.ID {
 		t.Fatalf("expected range decision, got %#v", got)
 	}
-	if got := cache.GetBan("198.51.100.4"); got != maskedIPDecision {
+	if got := cache.GetBan("198.51.100.4"); got == nil || got.ID != maskedIPDecision.ID {
 		t.Fatalf("expected masked IP decision, got %#v", got)
 	}
 
@@ -55,12 +55,12 @@ func TestCachePrefersExactIPThenMostSpecificRange(t *testing.T) {
 	equallySpecificNewerRange := decision(4, "range", "203.0.113.0/25", "ban")
 
 	cache.Apply(&models.DecisionsStreamResponse{New: []*models.Decision{wideRange, narrowRange, exactIP, equallySpecificNewerRange}})
-	if got := cache.GetBan("203.0.113.10"); got != exactIP {
+	if got := cache.GetBan("203.0.113.10"); got == nil || got.ID != exactIP.ID {
 		t.Fatalf("expected exact IP decision, got %#v", got)
 	}
 
 	cache.Apply(&models.DecisionsStreamResponse{Deleted: []*models.Decision{exactIP}})
-	if got := cache.GetBan("203.0.113.10"); got != equallySpecificNewerRange {
+	if got := cache.GetBan("203.0.113.10"); got == nil || got.ID != equallySpecificNewerRange.ID {
 		t.Fatalf("expected deterministic most-specific range decision, got %#v", got)
 	}
 }

@@ -24,7 +24,7 @@
 		<h2>Plugin Information</h2>
 		<p>Version: <span id="version-info">Loading...</span></p>
 		<p>
-			GitHub Repository: <a href="https://github.com/AnthonyMichaelTDM/zoraxy_crowdsec_bouncer">https://github.com/AnthonyMichaelTDM/zoraxy_crowdsec_bouncer</a>
+			GitHub Repository: <a href="https://github.com/yuyutti/zoraxy_crowdsec_bouncer">https://github.com/yuyutti/zoraxy_crowdsec_bouncer</a>
 		</p>
 	</div>
     <div class="ui divider"></div>
@@ -47,246 +47,107 @@
 	<div class="ui divider"></div>
 
 	<div class="ui basic segment">
-    	<h2>[Received Headers]</h2>
+        <h2>This management request's headers (sensitive values redacted)</h2>
     	<pre id="headers-display">Loading...</pre>
 	</div>
 
 </div>
 
-	<script>
-        // Global state
+    <script>
+        'use strict';
         let refreshing = false;
-        
-        // Utility functions
-        function escapeHtml(text) {
-            const div = document.createElement('div');
-            div.textContent = text;
-            return div.innerHTML;
+        async function api(name) {
+            const response = await fetch('./api/' + name, {cache: 'no-store'});
+            if (!response.ok) throw new Error('Request failed: HTTP ' + response.status);
+            return await response.json();
         }
-        
-        function wrapError(message) {
-            return `<span class="error">Error: ${escapeHtml(message)}</span>`;
+        function textElement(tag, text, className) {
+            const element = document.createElement(tag);
+            element.textContent = String(text);
+            if (className) element.className = className;
+            return element;
         }
-        
-        // API functions
         async function fetchVersion() {
-			const versionInfo = document.getElementById('version-info');
-
-			$.ajax({
-				url: './api/version',
-				method: 'GET',
-				dataType: 'json',
-				success: function(data) {
-					let versionText = escapeHtml(data.version);
-
-					if (data.checkError) {
-						versionText += ` <span class="tooltip" data-tooltip="${escapeHtml(data.checkError)}" data-inverted="" data-position="top left">(version check failed)</span>`;
-					} else if (data.isLatest) {
-						versionText += ' (latest)';
-					} else {
-						versionText += ` <a href="${escapeHtml(data.updateLink)}">(update available)</a>`;
-					}
-					versionInfo.innerHTML = versionText;
-				},
-				error: function(xhr, status, error) {
-					versionInfo.innerHTML = wrapError(`Failed to fetch version: ${xhr.status} ${xhr.statusText}`);
-				}
-			});
-        }
-        
-        async function fetchMetrics() {
-			metricsDashboard = document.getElementById('metrics-dashboard');
-
-			$.ajax({
-				url: './api/metrics',
-				method: 'GET',
-				dataType: 'json',
-				success: function(data) {
-					// If there's an error, show it
-					if (data.error) {
-						metricsDashboard.innerHTML = `
-							<div class="ui message error">
-								<div class="metric-title">Error</div>
-								<div class="metric-description error">${wrapError(data.error)}</div>
-							</div>
-						`;
-						return;
-					}
-
-					// Build up the HTML for metrics
-					let html = '';
-
-					// Blocked requests card
-					const blockedTotal = Object.values(data.blockedRequests).reduce((sum, val) => sum + val, 0);
-					let breakdown = '';
-					if (Object.keys(data.blockedRequests).length > 0) {
-						for (const [hostname, count] of Object.entries(data.blockedRequests)) {
-							breakdown += `<div class="metric-breakdown-item"><span class="metric-label">${escapeHtml(hostname)}</span><span class="metric-count">${count}</span></div>`;
-						}
-					} else {
-						breakdown = '<div class="metric-breakdown-item"><span class="metric-label">No data</span><span class="metric-count">0</span></div>';
-					}
-					html += `
-						<div class="metric-card">
-							<div class="metric-title">Blocked Requests</div>
-							<div class="metric-value">${blockedTotal}</div>
-							<div class="metric-description">Total requests blocked by CrowdSec decisions</div>
-							<div class="metric-breakdown">
-								${breakdown}
-							</div>
-						</div>
-					`;
-
-					// Processed requests card
-					const processedTotal = Object.values(data.processedRequests).reduce((sum, val) => sum + val, 0);
-					breakdown = '';
-					if (Object.keys(data.processedRequests).length > 0) {
-						for (const [hostname, count] of Object.entries(data.processedRequests)) {
-							breakdown += `<div class="metric-breakdown-item"><span class="metric-label">${escapeHtml(hostname)}</span><span class="metric-count">${count}</span></div>`;
-						}
-					} else {
-						breakdown = '<div class="metric-breakdown-item"><span class="metric-label">No data</span><span class="metric-count">0</span></div>';
-					}
-					html += `
-						<div class="metric-card">
-							<div class="metric-title">Processed Requests</div>
-							<div class="metric-value">${processedTotal}</div>
-							<div class="metric-description">Total requests processed by the bouncer</div>
-							<div class="metric-breakdown">
-								${breakdown}
-							</div>
-						</div>
-					`;
-					
-					// Block rate card
-					html += `
-						<div class="metric-card">
-							<div class="metric-title">Block Rate</div>
-							<div class="metric-value">${data.blockRate.toFixed(1)}%</div>
-							<div class="metric-description">Percentage of requests blocked</div>
-						</div>
-					`;
-					
-					// Render the metrics dashboard
-					metricsDashboard.innerHTML = html;
-				},
-				error: function(xhr, status, error) {
-					metricsDashboard.innerHTML = `
-						<div class="ui message error three columns">
-							<div class="metric-title">Error</div>
-							<div class="metric-description error">${wrapError(`Failed to fetch metrics: ${xhr.status} ${xhr.statusText}`)}</div>
-						</div>
-					`;
-				}
-			});
-        }
-
-		async function fetchConfigStatus() {
-			const statusContainer = document.getElementById('config-status-container');
-
-			$.ajax({
-				url: './api/config-status',
-				method: 'GET',
-				dataType: 'json',
-				success: function(data) {
-					if (!data.onboarding) {
-						statusContainer.innerHTML = '';
-						return;
-					}
-
-					const missingFields = Array.isArray(data.missingFields) && data.missingFields.length > 0
-						? data.missingFields.map(escapeHtml).join(', ')
-						: 'none';
-
-					statusContainer.innerHTML = `
-						<div class="ui warning message">
-							<div class="header">Onboarding Required</div>
-							<p>${escapeHtml(data.message || 'Configure the plugin to enable blocking.')}</p>
-							<p><strong>Missing fields:</strong> ${missingFields}</p>
-							<p>Blocking is currently disabled until configuration is completed and the plugin is restarted.</p>
-						</div>
-					`;
-				},
-				error: function(xhr) {
-					statusContainer.innerHTML = `
-						<div class="ui message error">
-							<div class="header">Unable to load configuration status</div>
- 							<p>${wrapError('Failed to fetch config status: ' + xhr.status + ' ' + xhr.statusText)}</p>						</div>
-					`;
-				}
-			});
-		}
-        
-        async function fetchHeaders() {
-			headersDisplay = document.getElementById('headers-display');
-
-			$.ajax({
-				url: './api/headers',
-				method: 'GET',
-				dataType: 'json',
-				success: function(data) {
-					let headersText = '';
-					const sortedHeaders = Object.keys(data.headers).sort();
-
-					for (const headerName of sortedHeaders) {
-						const values = data.headers[headerName];
-						for (const value of values) {
-							headersText += `${headerName}: ${escapeHtml(value)}\n`;
-						}
-					}
-
-					if (headersText === '') {
-						headersText = 'No headers received yet.';
-					}
-					headersDisplay.textContent = headersText;
-				},
-				error: function(xhr, status, error) {
-					headersDisplay.innerHTML = wrapError(`Failed to fetch headers: ${xhr.status} ${xhr.statusText}`);
-				}
-			});
-        }
-        
-        // Refresh functions
-        async function refreshMetrics() {
-            if (refreshing) return;
-            
-            refreshing = true;
-			$("#refresh-btn").addClass("loading")
-            const button = document.getElementById('refresh-btn');
-            const originalText = button.innerHTML;
-			button.disabled = true;
-
-            try {
-                await fetchMetrics();
-                
-                // Show success feedback briefly
-                setTimeout(() => {
-                    button.disabled = false;
-                    refreshing = false;
-					$("#refresh-btn").removeClass("loading")
-                }, 1000);
-                
-            } catch (error) {
-                console.error('Failed to refresh metrics:', error);
-                setTimeout(() => {
-                    button.disabled = false;
-                    refreshing = false;
-					$("#refresh-btn").removeClass("loading")
-                }, 2000);
+            const target = document.getElementById('version-info');
+            const data = await api('version');
+            target.replaceChildren(document.createTextNode(data.version || 'Unknown'));
+            if (data.checkError) {
+                const message = textElement('span', ' (update check unavailable)');
+                message.setAttribute('title', data.checkError);
+                target.append(message);
+            } else if (data.updateLink) {
+                const url = new URL(data.updateLink);
+                if (url.protocol === 'https:' && url.hostname === 'github.com' && url.pathname.startsWith('/yuyutti/zoraxy_crowdsec_bouncer/releases/tag/')) {
+                    const link = textElement('a', ' (update available)');
+                    link.setAttribute('href', url.href);
+                    target.append(link);
+                }
+            } else {
+                target.append(document.createTextNode(data.latest ? ' (up to date)' : ' (no published stable fork release)'));
             }
         }
-        
-        async function loadAll() {
-            await Promise.all([
-                fetchVersion(),
-				fetchConfigStatus(),
-                fetchMetrics(),
-                fetchHeaders()
-            ]);
+        async function fetchMetrics() {
+            const target = document.getElementById('metrics-dashboard');
+            const data = await api('metrics');
+            if (data.error) throw new Error(data.error);
+            const cards = [];
+            for (const [title, values] of [['BAN matches', data.blockedRequests || {}], ['Processed requests', data.processedRequests || {}]]) {
+                const card = textElement('div', '', 'metric-card');
+                const total = Object.values(values).reduce((sum, value) => sum + (Number(value) || 0), 0);
+                card.append(textElement('div', title, 'metric-title'), textElement('div', total, 'metric-value'));
+                for (const [host, count] of Object.entries(values)) card.append(textElement('div', host + ': ' + (Number(count) || 0), 'metric-breakdown-item'));
+                cards.push(card);
+            }
+            const rate = textElement('div', '', 'metric-card');
+            rate.append(textElement('div', 'BAN match rate', 'metric-title'), textElement('div', (Number(data.blockRate) || 0).toFixed(1) + '%', 'metric-value'));
+            cards.push(rate);
+            target.replaceChildren(...cards);
         }
-        
-        // Initialize on page load
-        document.addEventListener('DOMContentLoaded', loadAll);
+        async function fetchConfigStatus() {
+            const data = await api('config-status');
+            const target = document.getElementById('config-status-container');
+            const panel = textElement('div', '', 'ui message');
+            panel.append(textElement('strong', 'State: ' + (data.state || 'unknown')));
+            panel.append(textElement('p', data.message || (data.initialSyncComplete ? 'Initial synchronization complete.' : 'Protection is not ready.')));
+            panel.append(textElement('p', 'Active decisions: ' + (data.activeDecisions || 0) + ' / IP resolution errors: ' + (data.ipResolutionErrors || 0) + ' / Invalid decisions: ' + (data.invalidDecisions || 0)));
+            panel.append(textElement('p', 'Last sync: ' + (data.lastSyncSuccess || 'none') + ' / Policy: ' + (data.failurePolicy || 'unknown')));
+            if (data.lastFailure) panel.append(textElement('p', 'Last failure: ' + data.lastFailure));
+            if (data.missingFields && data.missingFields.length) panel.append(textElement('p', 'Missing: ' + data.missingFields.join(', ')));
+            target.replaceChildren(panel);
+        }
+        async function fetchHeaders() {
+            const data = await api('headers');
+            const headers = data.headers || {};
+            const lines = [];
+            for (const key of Object.keys(headers).sort()) {
+                for (const value of (Array.isArray(headers[key]) ? headers[key] : [])) lines.push(key + ': ' + value);
+            }
+            document.getElementById('headers-display').textContent = lines.join('\n') || 'No headers.';
+        }
+        async function showResult(action, targetId) {
+            try { await action(); }
+            catch (error) { document.getElementById(targetId).textContent = error.message || 'Request failed.'; }
+        }
+        async function refreshMetrics() {
+            if (refreshing) return;
+            refreshing = true;
+            const button = document.getElementById('refresh-btn');
+            button.disabled = true;
+            button.classList.add('loading');
+            try {
+                await Promise.all([showResult(fetchMetrics, 'metrics-dashboard'), showResult(fetchConfigStatus, 'config-status-container')]);
+            } finally {
+                button.disabled = false;
+                button.classList.remove('loading');
+                refreshing = false;
+            }
+        }
+        document.addEventListener('DOMContentLoaded', () => Promise.all([
+            showResult(fetchVersion, 'version-info'),
+            showResult(fetchMetrics, 'metrics-dashboard'),
+            showResult(fetchConfigStatus, 'config-status-container'),
+            showResult(fetchHeaders, 'headers-display')
+        ]));
     </script>
 </body>
 </html>

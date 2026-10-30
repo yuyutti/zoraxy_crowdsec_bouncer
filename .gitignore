@@ -33,3 +33,6 @@ build/
 # Editor/IDE
 # .idea/
 # .vscode/
+
+# Python helper bytecode
+__pycache__/

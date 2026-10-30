@@ -1,11 +1,11 @@
 package zoraxy_plugin
 
 import (
-	"fmt"
 	"html"
+	"io"
 	"net/http"
 	"os"
-	"path/filepath"
+	"path"
 	"strings"
 	"time"
 )
@@ -38,90 +38,54 @@ func NewPluginFileSystemUIRouter(pluginID string, targetDir string, handlerPrefi
 	}
 }
 
-func (p *PluginUiDebugRouter) populateCSRFToken(r *http.Request, fsHandler http.Handler) http.Handler {
-	//Get the CSRF token from header
-	csrfToken := r.Header.Get("X-Zoraxy-Csrf")
-	if csrfToken == "" {
-		csrfToken = "missing-csrf-token"
-	}
-	csrfToken = html.EscapeString(csrfToken) // Escape the CSRF token to prevent XSS attacks
-
-	//Return the middleware
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		// Check if the request is for an HTML file
-		if strings.HasSuffix(r.URL.Path, ".html") {
-			//Read the target file from file system
-			targetFilePath := strings.TrimPrefix(r.URL.Path, "/")
-			absPath, err := filepath.Abs(filepath.Join(p.TargetDir, targetFilePath))
-			if err != nil || !strings.HasPrefix(absPath, p.TargetDir) {
-				http.Error(w, "Invalid file path", http.StatusBadRequest)
-				return
-			}
-			targetFileContent, err := os.ReadFile(absPath)
-			if err != nil {
-				http.Error(w, "File not found", http.StatusNotFound)
-				return
-			}
-			body := string(targetFileContent)
-			body = strings.ReplaceAll(body, "{{.csrfToken}}", csrfToken)
-			w.Header().Set("Content-Type", "text/html")
-			w.WriteHeader(http.StatusOK)
-			w.Write([]byte(body))
-			return
-		} else if strings.HasSuffix(r.URL.Path, "/") {
-			//Check if the request is for a directory
-			//Check if the directory has an index.html file
-			targetFilePath := strings.TrimPrefix(r.URL.Path, "/")
-			// block path traversal
-			absPath, err := filepath.Abs(filepath.Join(p.TargetDir, targetFilePath, "index.html"))
-			if err != nil || !strings.HasPrefix(absPath, p.TargetDir) {
-				http.Error(w, "Invalid file path", http.StatusBadRequest)
-				return
-			}
-			if _, err := os.Stat(absPath); err == nil {
-				//Serve the index.html file
-				targetFileContent, err := os.ReadFile(absPath)
-				if err != nil {
-					http.Error(w, "File not found", http.StatusNotFound)
-					return
-				}
-				body := string(targetFileContent)
-				body = strings.ReplaceAll(body, "{{.csrfToken}}", csrfToken)
-				w.Header().Set("Content-Type", "text/html")
-				w.WriteHeader(http.StatusOK)
-				w.Write([]byte(body))
-				return
-			}
-		}
-
-		//Call the next handler
-		fsHandler.ServeHTTP(w, r)
-	})
-
-}
-
-// GetHttpHandler returns the http.Handler for the PluginUiRouter
+// Handler uses os.Root: relative roots work, and symlinks cannot escape it.
+// This router is a development helper, not used by production main.
 func (p *PluginUiDebugRouter) Handler() http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		//Remove the plugin UI handler path prefix
-		if p.EnableDebug {
-			fmt.Print("Request URL:", r.URL.Path, " rewriting to ")
+		requestPath := strings.TrimPrefix(r.URL.Path, p.HandlerPrefix)
+		for _, part := range strings.Split(requestPath, "/") {
+			if part == ".." {
+				http.Error(w, "Invalid file path", http.StatusBadRequest)
+				return
+			}
 		}
-
-		rewrittenURL := r.RequestURI
-		rewrittenURL = strings.TrimPrefix(rewrittenURL, p.HandlerPrefix)
-		rewrittenURL = strings.ReplaceAll(rewrittenURL, "//", "/")
-		r.URL.Path = rewrittenURL
-		r.RequestURI = rewrittenURL
-		if p.EnableDebug {
-			fmt.Println(r.URL.Path)
+		root, err := os.OpenRoot(p.TargetDir)
+		if err != nil {
+			http.NotFound(w, r)
+			return
 		}
-
-		//Serve the file from the file system
-		fsHandler := http.FileServer(http.Dir(p.TargetDir))
-
-		// Replace {{csrf_token}} with the actual CSRF token and serve the file
-		p.populateCSRFToken(r, fsHandler).ServeHTTP(w, r)
+		defer root.Close()
+		name := strings.TrimPrefix(path.Clean("/"+requestPath), "/")
+		if name == "." || name == "" {
+			name = "index.html"
+		}
+		file, err := root.Open(name)
+		if err != nil {
+			http.NotFound(w, r)
+			return
+		}
+		defer file.Close()
+		stat, err := file.Stat()
+		if err != nil || !stat.Mode().IsRegular() {
+			http.NotFound(w, r)
+			return
+		}
+		if strings.HasSuffix(name, ".html") {
+			body, err := io.ReadAll(io.LimitReader(file, (2<<20)+1))
+			if err != nil || len(body) > 2<<20 {
+				http.Error(w, "UI file too large", http.StatusInternalServerError)
+				return
+			}
+			token := html.EscapeString(r.Header.Get("X-Zoraxy-Csrf"))
+			body = []byte(strings.ReplaceAll(string(body), "{{.csrfToken}}", token))
+			w.Header().Set("Content-Type", "text/html; charset=utf-8")
+			w.Header().Set("Cache-Control", "no-store")
+			if r.Method != http.MethodHead {
+				_, _ = w.Write(body)
+			}
+			return
+		}
+		http.ServeContent(w, r, stat.Name(), stat.ModTime(), file)
 	})
 }
 
