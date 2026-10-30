@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"strings"
 	"sync"
 	"time"
 
@@ -41,35 +42,81 @@ type HeadersResponse struct {
 }
 
 type ConfigStatusResponse struct {
-	Onboarding      bool     `json:"onboarding"`
-	BlockingEnabled bool     `json:"blockingEnabled"`
-	Message         string   `json:"message,omitempty"`
-	MissingFields   []string `json:"missingFields,omitempty"`
+	InvalidDecisions    uint64    `json:"invalidDecisions"`
+	State               string    `json:"state"`
+	InitialSyncComplete bool      `json:"initialSyncComplete"`
+	LastSyncSuccess     time.Time `json:"lastSyncSuccess"`
+	LastFailure         string    `json:"lastFailure,omitempty"`
+	ActiveDecisions     int       `json:"activeDecisions"`
+	FailurePolicy       string    `json:"failurePolicy"`
+	IPResolutionErrors  uint64    `json:"ipResolutionErrors"`
+	Onboarding          bool      `json:"onboarding"`
+	BlockingEnabled     bool      `json:"blockingEnabled"`
+	Message             string    `json:"message,omitempty"`
+	MissingFields       []string  `json:"missingFields,omitempty"`
 }
 
-var runtimeConfigStatus = ConfigStatusResponse{
-	Onboarding:      false,
-	BlockingEnabled: true,
+var statusMu sync.RWMutex
+var statusCounts func() (int, uint64, uint64)
+var runtimeConfigStatus = ConfigStatusResponse{State: "stopped", FailurePolicy: "last-known-good-until-expiry"}
+
+func SetStatusCounts(counts func() (int, uint64, uint64)) {
+	statusMu.Lock()
+	defer statusMu.Unlock()
+	statusCounts = counts
+}
+func SetSyncResult(success bool, failure string) {
+	statusMu.Lock()
+	defer statusMu.Unlock()
+	if success {
+		runtimeConfigStatus.InitialSyncComplete = true
+		runtimeConfigStatus.LastSyncSuccess = time.Now().UTC()
+		runtimeConfigStatus.LastFailure = ""
+		runtimeConfigStatus.State = "ready"
+		runtimeConfigStatus.BlockingEnabled = true
+	} else {
+		runtimeConfigStatus.LastFailure = failure
+		if runtimeConfigStatus.InitialSyncComplete {
+			runtimeConfigStatus.State = "degraded"
+		} else {
+			runtimeConfigStatus.State = "syncing"
+		}
+	}
+}
+func SetError(category string) {
+	statusMu.Lock()
+	defer statusMu.Unlock()
+	runtimeConfigStatus.State, runtimeConfigStatus.LastFailure = "error", category
+	runtimeConfigStatus.BlockingEnabled = false
+}
+
+func SetStopped() {
+	statusMu.Lock()
+	defer statusMu.Unlock()
+	runtimeConfigStatus.State = "stopped"
+	runtimeConfigStatus.BlockingEnabled = false
 }
 
 // API handlers
 func apiVersionHandler(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Cache-Control", "no-store")
+	w.Header().Set("X-Content-Type-Options", "nosniff")
 
 	response := VersionInfo{
 		Version: info.VERSION_STRING,
 	}
 
 	// Check for latest version
-	latest, err := versionCheck()
+	latest, err := updates.check(r.Context())
 	if err != nil {
 		response.CheckError = err.Error()
 		response.IsLatest = false
 	} else {
 		response.Latest = latest
-		response.IsLatest = (latest == info.VERSION_STRING)
+		response.IsLatest = latest == "" || compareVersions(latest, info.VERSION_STRING) <= 0
 		if !response.IsLatest {
-			response.UpdateLink = fmt.Sprintf("https://github.com/AnthonyMichaelTDM/zoraxy_crowdsec_bouncer/releases/tag/%s", latest)
+			response.UpdateLink = fmt.Sprintf("https://github.com/yuyutti/zoraxy_crowdsec_bouncer/releases/tag/%s", latest)
 		}
 	}
 
@@ -78,6 +125,8 @@ func apiVersionHandler(w http.ResponseWriter, r *http.Request) {
 
 func apiMetricsHandler(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Cache-Control", "no-store")
+	w.Header().Set("X-Content-Type-Options", "nosniff")
 
 	response := MetricsResponse{
 		BlockedRequests:   make(map[string]float64),
@@ -115,9 +164,9 @@ func apiMetricsHandler(w http.ResponseWriter, r *http.Request) {
 			value := metric.GetGauge().GetValue()
 
 			if metricName == string(metrics.DROPPED_REQUESTS) {
-				response.BlockedRequests[hostname] = value
+				response.BlockedRequests[hostname] += value
 			} else if metricName == string(metrics.PROCESSED_REQUESTS) {
-				response.ProcessedRequests[hostname] = value
+				response.ProcessedRequests[hostname] += value
 			}
 		}
 	}
@@ -144,14 +193,26 @@ func apiMetricsHandler(w http.ResponseWriter, r *http.Request) {
 
 func apiHeadersHandler(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Cache-Control", "no-store")
+	w.Header().Set("X-Content-Type-Options", "nosniff")
 
 	response := HeadersResponse{
 		Headers: make(map[string][]string),
 	}
 
-	// Copy all headers
+	// Allow ordinary diagnostic headers; private application headers are redacted.
 	for name, values := range r.Header {
-		response.Headers[name] = values
+		lower := strings.ToLower(name)
+		sensitive := true
+		switch lower {
+		case "accept", "accept-encoding", "accept-language", "content-type", "content-length", "user-agent", "connection", "x-forwarded-for", "x-real-ip", "cf-connecting-ip", "cf-connecting-ipv6":
+			sensitive = false
+		}
+		if sensitive {
+			response.Headers[name] = []string{"[redacted]"}
+		} else {
+			response.Headers[name] = append([]string(nil), values...)
+		}
 	}
 
 	json.NewEncoder(w).Encode(response)
@@ -159,95 +220,15 @@ func apiHeadersHandler(w http.ResponseWriter, r *http.Request) {
 
 func apiConfigStatusHandler(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(runtimeConfigStatus)
-}
-
-// Version checking with caching
-var (
-	versionCheckOnce   sync.Once
-	versionCheckResult struct {
-		LatestVersion string
-		err           error
+	w.Header().Set("Cache-Control", "no-store")
+	w.Header().Set("X-Content-Type-Options", "nosniff")
+	statusMu.RLock()
+	response, counts := runtimeConfigStatus, statusCounts
+	statusMu.RUnlock()
+	if counts != nil {
+		response.ActiveDecisions, response.IPResolutionErrors, response.InvalidDecisions = counts()
 	}
-	versionCheckRateLimit = 24 * time.Hour // Check for updates at most once every 24 hours
-	versionCheckLastCheck = time.Time{}
-)
-
-func storeVersionCheckResult(latestVersion string, err error) {
-	versionCheckResult = struct {
-		LatestVersion string
-		err           error
-	}{
-		LatestVersion: latestVersion,
-		err:           err,
-	}
-	if err != nil {
-		versionCheckLastCheck = time.Now()
-	}
-}
-
-// Uses the GitHub API to check the latest version of the plugin.
-// Returns both the latest version and the release page URL.
-func versionCheck() (string, error) {
-	const ENDPOINT = "https://api.github.com/repos/AnthonyMichaelTDM/zoraxy_crowdsec_bouncer/tags"
-	const HEADER_KEY = "Accept"
-	const HEADER_VALUE = "application/vnd.github.v3+json"
-
-	if time.Since(versionCheckLastCheck) < versionCheckRateLimit {
-		versionCheckOnce = sync.Once{} // Reset for next call
-	}
-
-	versionCheckOnce.Do(func() {
-		// build the request
-		req, err := http.NewRequest("GET", ENDPOINT, nil)
-		if err != nil {
-			storeVersionCheckResult("", fmt.Errorf("failed to create request: %w", err))
-			return
-		}
-		req.Header.Set(HEADER_KEY, HEADER_VALUE)
-
-		// send the request
-		client := &http.Client{}
-		resp, err := client.Do(req)
-		if err != nil {
-			storeVersionCheckResult("", fmt.Errorf("failed to send request: %w", err))
-			return
-		}
-		defer resp.Body.Close()
-
-		if resp.StatusCode != http.StatusOK {
-			storeVersionCheckResult("", fmt.Errorf("unexpected status code: %d", resp.StatusCode))
-			return
-		}
-
-		// parse the response
-		type releaseInfo struct {
-			Name string `json:"name"`
-		}
-
-		var releases []releaseInfo
-		if err := json.NewDecoder(resp.Body).Decode(&releases); err != nil {
-			storeVersionCheckResult("", fmt.Errorf("failed to decode response: %w", err))
-			return
-		}
-		if len(releases) == 0 {
-			storeVersionCheckResult("", fmt.Errorf("no releases found"))
-			return
-		}
-
-		// get the latest version
-		latestRelease := releases[0].Name
-
-		// store the result
-		storeVersionCheckResult(latestRelease, nil)
-	})
-
-	if versionCheckResult.err != nil {
-		versionCheckOnce = sync.Once{} // Reset for next call
-		return "", versionCheckResult.err
-	} else {
-		return versionCheckResult.LatestVersion, nil
-	}
+	json.NewEncoder(w).Encode(response)
 }
 
 // InitWebServer initializes the web server and serves the plugin UI.
@@ -255,7 +236,17 @@ func versionCheck() (string, error) {
 //
 // Runs everything on the default serve mux.
 func InitWebServer(logger *logrus.Logger, g *errgroup.Group, ctx context.Context, port int, configStatus ConfigStatusResponse) {
+	statusMu.Lock()
 	runtimeConfigStatus = configStatus
+	runtimeConfigStatus.FailurePolicy = "last-known-good-until-expiry"
+	if runtimeConfigStatus.State == "" {
+		if configStatus.Onboarding {
+			runtimeConfigStatus.State = "onboarding"
+		} else {
+			runtimeConfigStatus.State = "syncing"
+		}
+	}
+	statusMu.Unlock()
 
 	mux := http.DefaultServeMux
 
@@ -271,8 +262,13 @@ func InitWebServer(logger *logrus.Logger, g *errgroup.Group, ctx context.Context
 
 	serverAddr := fmt.Sprintf("127.0.0.1:%d", port)
 	server := &http.Server{
-		Addr:    serverAddr,
-		Handler: mux,
+		Addr:              serverAddr,
+		Handler:           mux,
+		ReadHeaderTimeout: 5 * time.Second,
+		ReadTimeout:       10 * time.Second,
+		WriteTimeout:      15 * time.Second,
+		IdleTimeout:       60 * time.Second,
+		MaxHeaderBytes:    64 << 10,
 	}
 
 	g.Go(func() error {

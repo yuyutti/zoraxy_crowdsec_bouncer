@@ -72,7 +72,8 @@ func (p *PluginUiRouter) populateCSRFToken(r *http.Request, fsHandler http.Handl
 			}
 			body := string(targetFileContent)
 			body = strings.ReplaceAll(body, "{{.csrfToken}}", csrfToken)
-			w.Header().Set("Content-Type", "text/html")
+			w.Header().Set("Content-Type", "text/html; charset=utf-8")
+			w.Header().Set("Cache-Control", "no-store")
 			w.WriteHeader(http.StatusOK)
 			w.Write([]byte(body))
 			return
@@ -85,7 +86,8 @@ func (p *PluginUiRouter) populateCSRFToken(r *http.Request, fsHandler http.Handl
 			if err == nil {
 				body := string(indexFileContent)
 				body = strings.ReplaceAll(body, "{{.csrfToken}}", csrfToken)
-				w.Header().Set("Content-Type", "text/html")
+				w.Header().Set("Content-Type", "text/html; charset=utf-8")
+				w.Header().Set("Cache-Control", "no-store")
 				w.WriteHeader(http.StatusOK)
 				w.Write([]byte(body))
 				return
@@ -102,18 +104,16 @@ func (p *PluginUiRouter) populateCSRFToken(r *http.Request, fsHandler http.Handl
 func (p *PluginUiRouter) Handler() http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		//Remove the plugin UI handler path prefix
-		if p.EnableDebug {
-			fmt.Print("Request URL:", r.URL.Path, " rewriting to ")
-		}
 
 		rewrittenURL := r.RequestURI
 		rewrittenURL = strings.TrimPrefix(rewrittenURL, p.HandlerPrefix)
-		rewrittenURL = strings.ReplaceAll(rewrittenURL, "//", "/")
-		r.URL, _ = url.Parse(rewrittenURL)
-		r.RequestURI = rewrittenURL
-		if p.EnableDebug {
-			fmt.Println(r.URL.Path)
+		parsed, parseErr := url.ParseRequestURI(rewrittenURL)
+		if parseErr != nil {
+			http.Error(w, "Invalid request URI", http.StatusBadRequest)
+			return
 		}
+		r.URL = parsed
+		r.RequestURI = rewrittenURL
 
 		//Serve the file from the embed.FS
 		subFS, err := fs.Sub(*p.TargetFs, strings.TrimPrefix(p.TargetFsPrefix, "/"))

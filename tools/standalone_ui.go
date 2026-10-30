@@ -38,7 +38,9 @@ func main() {
 	// Initialize the web UI
 	web.InitWebServer(logger, g, ctx, PORT, web.ConfigStatusResponse{
 		Onboarding:      false,
-		BlockingEnabled: true,
+		BlockingEnabled: false,
+		State:           "preview",
+		Message:         "UI preview only: no requests are blocked and no LAPI connection is made.",
 	})
 
 	// Handle signals

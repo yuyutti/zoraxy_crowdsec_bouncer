@@ -1,143 +1,111 @@
-name: Build and Create Release
-permissions:
-  contents: write
-
+name: Publish fork release
 on:
-  push:
-    branches:
-      - main
-    tags:
-      - 'v*'
-
+    push:
+        tags: ['v*']
+    workflow_dispatch:
+        inputs:
+            version:
+                description: 'Exact source version/tag (for example v1.2.4-1)'
+                required: true
+                type: string
+            prerelease:
+                description: 'Publish as an evaluation prerelease'
+                default: true
+                type: boolean
+permissions:
+    contents: read
 concurrency:
-  group: cd-${{ github.ref }}
-  cancel-in-progress: true
-
+    group: release-${{ github.ref }}
+    cancel-in-progress: false
 jobs:
-  build:
-    runs-on: ubuntu-latest
-    strategy:
-      fail-fast: false
-      matrix:
-        target:
-          - asset: zoraxycrowdsecbouncer_linux_386
-            goos: linux
-            goarch: '386'
-          - asset: zoraxycrowdsecbouncer_linux_amd64
-            goos: linux
-            goarch: amd64
-          - asset: zoraxycrowdsecbouncer_linux_arm
-            goos: linux
-            goarch: arm
-            goarm: '7'
-          - asset: zoraxycrowdsecbouncer_linux_arm64
-            goos: linux
-            goarch: arm64
-          - asset: zoraxycrowdsecbouncer_linux_mipsle
-            goos: linux
-            goarch: mipsle
-          - asset: zoraxycrowdsecbouncer_linux_riscv64
-            goos: linux
-            goarch: riscv64
-          - asset: zoraxycrowdsecbouncer_windows_amd64.exe
-            goos: windows
-            goarch: amd64
-    steps:
-    - uses: actions/checkout@v4
-
-    - name: Set up Go
-      uses: actions/setup-go@v5
-      with:
-        go-version-file: 'go.mod'
-
-    - name: Install dependencies
-      run: go mod download
-
-    - name: Build ${{ matrix.target.asset }}
-      env:
-        CGO_ENABLED: '0'
-        GOOS: ${{ matrix.target.goos }}
-        GOARCH: ${{ matrix.target.goarch }}
-        GOARM: ${{ matrix.target.goarm }}
-      run: |
-        go build -trimpath -ldflags "-s -w" -o "${{ matrix.target.asset }}" .
-
-    - name: Generate checksum
-      run: |
-        sha256sum "${{ matrix.target.asset }}" > "${{ matrix.target.asset }}.sha256"
-
-    - name: Upload binary artifact
-      uses: actions/upload-artifact@v4
-      with:
-        name: ${{ matrix.target.asset }}
-        path: ${{ matrix.target.asset }}
-
-    - name: Upload binary checksum artifact
-      uses: actions/upload-artifact@v4
-      with:
-        name: ${{ matrix.target.asset }}.sha256
-        path: ${{ matrix.target.asset }}.sha256
-
-  release:
-    runs-on: ubuntu-latest
-    needs: build
-    steps:
-    - uses: actions/checkout@v4
-
-    - name: Download build artifacts
-      uses: actions/download-artifact@v4
-      with:
-        path: dist
-
-    - name: Gather release artifacts
-      id: release_files
-      run: |
-        echo "files<<EOF" >> "$GITHUB_OUTPUT"
-        find dist -type f | sort >> "$GITHUB_OUTPUT"
-        echo "config.yaml" >> "$GITHUB_OUTPUT"
-        echo "config.yaml.sha256" >> "$GITHUB_OUTPUT"
-        echo "EOF" >> "$GITHUB_OUTPUT"
-        echo "sha256_files<<EOF" >> "$GITHUB_OUTPUT"
-        find dist -type f -name '*.sha256' | sort >> "$GITHUB_OUTPUT"
-        echo "EOF" >> "$GITHUB_OUTPUT"
-
-    - name: Generate config checksum
-      run: sha256sum config.yaml > config.yaml.sha256
-
-    - name: Create release body
-      id: release_body
-      run: |
-        echo "# Release notes for ${{ github.ref_name }}" > release_notes.txt
-        echo "Build date: $(date)" >> release_notes.txt
-        echo "Commit SHA: ${{ github.sha }}" >> release_notes.txt
-        echo "" >> release_notes.txt
-        echo "| File | SHA256 Checksum |" >> release_notes.txt
-        echo "| --- | --- |" >> release_notes.txt
-        while IFS= read -r checksum_file; do
-          checksum="$(awk '{print $1}' "$checksum_file")"
-          binary_name="$(basename "$checksum_file" .sha256)"
-          echo "| ${binary_name} | \`${checksum}\` |" >> release_notes.txt
-        done < <(printf '%s\n' "${{ steps.release_files.outputs.sha256_files }}")
-        echo "| config.yaml | \`$(awk '{print $1}' config.yaml.sha256)\` |" >> release_notes.txt
-        echo "BODY<<EOF" >> "$GITHUB_OUTPUT"
-        cat release_notes.txt >> "$GITHUB_OUTPUT"
-        echo "EOF" >> "$GITHUB_OUTPUT"
-
-    - name: Create Release
-      id: create_release
-      if: startsWith(github.ref, 'refs/tags/')
-      uses: softprops/action-gh-release@v2
-      with:
-        tag_name: ${{ github.ref_name }}
-        name: Release ${{ github.ref_name }}
-        draft: false
-        prerelease: true
-        generate_release_notes: true
-        body: ${{ steps.release_body.outputs.BODY }}
-        files: ${{ steps.release_files.outputs.files }}
-      env:
-        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
-    - name: Echo release
-      run: |
-        cat release_notes.txt
+    metadata:
+        if: github.repository == 'yuyutti/zoraxy_crowdsec_bouncer'
+        runs-on: ubuntu-latest
+        outputs:
+            version: ${{ steps.metadata.outputs.version }}
+            prerelease: ${{ steps.metadata.outputs.prerelease }}
+        steps:
+            - uses: actions/checkout@v4
+            - name: Check version, repository and event
+              id: metadata
+              env:
+                  REQUESTED_VERSION: ${{ inputs.version }}
+                  REQUESTED_PRERELEASE: ${{ inputs.prerelease }}
+              run: python3 tools/verify_release.py --event
+    verify:
+        needs: metadata
+        uses: ./.github/workflows/CI.yml
+    release:
+        needs: [metadata, verify]
+        permissions:
+            contents: write
+        runs-on: ubuntu-latest
+        steps:
+            - uses: actions/checkout@v4
+            - uses: actions/download-artifact@v4
+              with:
+                  pattern: zoraxycrowdsecbouncer_*
+                  path: dist
+                  merge-multiple: true
+            - name: Verify and assemble assets from this run
+              env:
+                  RELEASE_VERSION: ${{ needs.metadata.outputs.version }}
+              run: python3 tools/prepare_release.py
+            - name: Publish verified fork assets
+              uses: actions/github-script@v7
+              env:
+                  RELEASE_VERSION: ${{ needs.metadata.outputs.version }}
+                  RELEASE_PRERELEASE: ${{ needs.metadata.outputs.prerelease }}
+              with:
+                  script: |
+                      const fs = require('fs');
+                      const crypto = require('crypto');
+                      const owner = 'yuyutti';
+                      const repo = 'zoraxy_crowdsec_bouncer';
+                      if (context.repo.owner !== owner || context.repo.repo !== repo) {
+                          throw new Error('Release repository mismatch');
+                      }
+                      const tag = process.env.RELEASE_VERSION;
+                      const prerelease = process.env.RELEASE_PRERELEASE === 'true';
+                      let commit = context.sha;
+                      try {
+                          const ref = await github.rest.git.getRef({owner, repo, ref: `tags/${tag}`});
+                          let object = ref.data.object;
+                          while (object.type === 'tag') {
+                              object = (await github.rest.git.getTag({owner, repo, tag_sha: object.sha})).data.object;
+                          }
+                          if (object.sha !== commit) throw new Error('Tag points to a different SHA');
+                      } catch (error) {
+                          if (error.status !== 404) throw error;
+                      }
+                      const existing = await github.rest.repos.listReleases({owner, repo, per_page: 100});
+                      if (existing.data.some(release => release.tag_name === tag)) {
+                          throw new Error('Release already exists; refusing to overwrite assets');
+                      }
+                      const files = fs.readdirSync('dist').sort();
+                      const notes = fs.readFileSync('dist/release-notes.md', 'utf8');
+                      const release = (await github.rest.repos.createRelease({
+                          owner, repo, tag_name: tag, target_commitish: commit,
+                          name: tag, body: notes, draft: true, prerelease,
+                          make_latest: 'false'
+                      })).data;
+                      for (const name of files) {
+                          const data = fs.readFileSync(`dist/${name}`);
+                          const uploaded = (await github.rest.repos.uploadReleaseAsset({
+                              owner, repo, release_id: release.id, name, data,
+                              headers: {'content-type': 'application/octet-stream', 'content-length': data.length}
+                          })).data;
+                          const digest = `sha256:${crypto.createHash('sha256').update(data).digest('hex')}`;
+                          if (uploaded.size !== data.length || (uploaded.digest && uploaded.digest !== digest)) {
+                              throw new Error(`Uploaded asset verification failed: ${name}`);
+                          }
+                      }
+                      const assets = (await github.rest.repos.listReleaseAssets({owner, repo, release_id: release.id, per_page: 100})).data;
+                      if (assets.length !== files.length || !files.every(name => assets.some(asset => asset.name === name))) {
+                          throw new Error('Incomplete release assets; leaving draft unpublished');
+                      }
+                      const published = (await github.rest.repos.updateRelease({
+                          owner, repo, release_id: release.id, draft: false,
+                          prerelease, make_latest: prerelease ? 'false' : 'true'
+                      })).data;
+                      await core.summary.addLink(`Published ${tag}`, published.html_url).write();

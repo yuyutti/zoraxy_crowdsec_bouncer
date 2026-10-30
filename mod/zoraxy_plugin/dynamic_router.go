@@ -2,9 +2,10 @@ package zoraxy_plugin
 
 import (
 	"encoding/json"
-	"fmt"
+	"errors"
 	"io"
 	"net/http"
+	"net/url"
 	"strings"
 )
 
@@ -32,27 +33,20 @@ func (p *PathRouter) RegisterDynamicSniffHandler(sniff_ingress string, mux *http
 		sniff_ingress = sniff_ingress + "/"
 	}
 	mux.Handle(sniff_ingress, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if p.enableDebugPrint {
-			fmt.Println("Request captured by dynamic sniff path: " + r.RequestURI)
-		}
 
 		// Decode the request payload
-		jsonBytes, err := io.ReadAll(r.Body)
-		if err != nil {
-			if p.enableDebugPrint {
-				fmt.Println("Error reading request body:", err)
-			}
-			http.Error(w, "Internal Server Error", http.StatusInternalServerError)
+		jsonBytes, err := io.ReadAll(io.LimitReader(r.Body, (1<<20)+1))
+		if err != nil || len(jsonBytes) > 1<<20 {
+			// Sniff's only capture signal is 200. HTTP errors may fail open in
+			// Zoraxy, so malformed/oversized internal payloads select capture.
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte("OK"))
 			return
 		}
 		payload, err := DecodeForwardRequestPayload(jsonBytes)
 		if err != nil {
-			if p.enableDebugPrint {
-				fmt.Println("Error decoding request payload:", err)
-				fmt.Print("Payload: ")
-				fmt.Println(string(jsonBytes))
-			}
-			http.Error(w, "Internal Server Error", http.StatusInternalServerError)
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte("OK"))
 			return
 		}
 
@@ -78,20 +72,21 @@ func (p *PathRouter) RegisterDynamicCaptureHandle(capture_ingress string, mux *h
 		capture_ingress = capture_ingress + "/"
 	}
 	mux.Handle(capture_ingress, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if p.enableDebugPrint {
-			fmt.Println("Request captured by dynamic capture path: " + r.RequestURI)
-		}
 
 		rewrittenURL := r.RequestURI
 		rewrittenURL = strings.TrimPrefix(rewrittenURL, capture_ingress)
-		rewrittenURL = strings.ReplaceAll(rewrittenURL, "//", "/")
 		if rewrittenURL == "" {
 			rewrittenURL = "/"
 		}
 		if !strings.HasPrefix(rewrittenURL, "/") {
 			rewrittenURL = "/" + rewrittenURL
 		}
-		r.RequestURI = rewrittenURL
+		parsed, err := url.ParseRequestURI(rewrittenURL)
+		if err != nil {
+			http.Error(w, "Invalid request URI", http.StatusBadRequest)
+			return
+		}
+		r.RequestURI, r.URL = rewrittenURL, parsed
 
 		handlefunc(w, r)
 	}))
@@ -110,6 +105,7 @@ type DynamicSniffForwardRequest struct {
 	Hostname   string              `json:"hostname"`
 	URL        string              `json:"url"`
 	Header     map[string][]string `json:"header"`
+	ClientIP   string              `json:"client_ip"`
 	RemoteAddr string              `json:"remote_addr"`
 	Host       string              `json:"host"`
 	RequestURI string              `json:"request_uri"`
@@ -123,8 +119,16 @@ type DynamicSniffForwardRequest struct {
 }
 
 // GetForwardRequestPayload returns a DynamicSniffForwardRequest object from an http.Request object
-func EncodeForwardRequestPayload(r *http.Request) DynamicSniffForwardRequest {
+func EncodeForwardRequestPayload(r *http.Request, clientIP ...string) DynamicSniffForwardRequest {
+	if r == nil {
+		return DynamicSniffForwardRequest{}
+	}
+	resolved := ""
+	if len(clientIP) > 0 {
+		resolved = clientIP[0]
+	}
 	return DynamicSniffForwardRequest{
+		ClientIP:   resolved,
 		Method:     r.Method,
 		Hostname:   r.Host,
 		URL:        r.URL.String(),
@@ -142,6 +146,9 @@ func EncodeForwardRequestPayload(r *http.Request) DynamicSniffForwardRequest {
 // DecodeForwardRequestPayload decodes JSON bytes into a DynamicSniffForwardRequest object
 func DecodeForwardRequestPayload(jsonBytes []byte) (DynamicSniffForwardRequest, error) {
 	var payload DynamicSniffForwardRequest
+	if len(jsonBytes) > 1<<20 || strings.TrimSpace(string(jsonBytes)) == "null" {
+		return payload, errors.New("invalid sniff payload")
+	}
 	err := json.Unmarshal(jsonBytes, &payload)
 	if err != nil {
 		return DynamicSniffForwardRequest{}, err
@@ -151,6 +158,9 @@ func DecodeForwardRequestPayload(jsonBytes []byte) (DynamicSniffForwardRequest, 
 
 // GetRequest returns the original http.Request object, for debugging purposes
 func (dsfr *DynamicSniffForwardRequest) GetRequest() *http.Request {
+	if dsfr == nil {
+		return nil
+	}
 	return dsfr.rawRequest
 }
 
@@ -158,5 +168,8 @@ func (dsfr *DynamicSniffForwardRequest) GetRequest() *http.Request {
 // if this UUID is empty string, that might indicate the request
 // is not coming from the dynamic router
 func (dsfr *DynamicSniffForwardRequest) GetRequestUUID() string {
+	if dsfr == nil {
+		return ""
+	}
 	return dsfr.requestUUID
 }

@@ -1,9 +1,12 @@
-# Crowdsec Bouncer Configuration
+# CrowdSec Bouncer - yuyutti fork v1.2.4-1
 api_key: <CROWDSEC_BOUNCER_API_KEY>
 agent_url: http://127.0.0.1:8080
-# How frequently to request decision deltas from CrowdSec's stream endpoint.
 stream_update_frequency: 10s
-# Log level for the bouncer, options: trace, debug, info, warning, error
 log_level: warning
-# Set to true if zoraxy is proxied behind Cloudflare
 is_proxied_behind_cloudflare: true
+# Empty lists trust no arbitrary forwarding peers.
+trusted_proxies: []
+cloudflare_trusted_relays: []
+block_response:
+    status_code: 403
+    page: default

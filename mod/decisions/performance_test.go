@@ -159,8 +159,8 @@ func TestIndexPreservesDecisionMatching(t *testing.T) {
 					best = specificity
 				}
 			}
-			if got := c.GetBan(raw); got != want {
-				t.Fatalf("%s: got %v want %v", raw, *got, *want)
+			if got := c.GetBan(raw); !sameID(got, want) {
+				t.Fatalf("%s: got %v want %v", raw, got, want)
 			}
 		}
 	}
@@ -194,4 +194,11 @@ func BenchmarkDeleteManySamePrefix(b *testing.B) {
 		b.StartTimer()
 		c.Apply(&models.DecisionsStreamResponse{Deleted: ds})
 	}
+}
+
+func sameID(a, b *models.Decision) bool {
+	if a == nil || b == nil {
+		return a == nil && b == nil
+	}
+	return a.ID == b.ID
 }

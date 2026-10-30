@@ -34,6 +34,7 @@ var (
 func handleSignals(ctx context.Context) error {
 	signalChan := make(chan os.Signal, 1)
 	signal.Notify(signalChan, syscall.SIGTERM, os.Interrupt)
+	defer signal.Stop(signalChan)
 
 	select {
 	case s := <-signalChan:
@@ -53,7 +54,7 @@ func handleSignals(ctx context.Context) error {
 func StartSignalHandler(logger *logrus.Logger, g *errgroup.Group, ctx context.Context) {
 	g.Go(func() error {
 		if err := handleSignals(ctx); err != nil {
-			logger.Warnf("Signal handler received an error: %v", err)
+			logger.Infof("Stopping plugin: %v", err)
 			return err
 		}
 

@@ -1,3 +1,18 @@
+## v1.2.4-1 (2026-10-30, local changes; release not published)
+
+- Harden resolved client IP and legacy proxy trust boundaries, including mapped IPv6.
+- Expire cached decisions locally; replace successful full snapshots on startup/reconnect.
+- Separate runtime readiness from configuration completeness and retain onboarding UI.
+- Correct metrics totals/deltas, cap label cardinality, and retain failed usage payloads.
+- Bound/cache fork update checks, redact credentials, and await UI requests safely.
+- Add optional evil/custom block pages while preserving exact default 403 Forbidden.
+- Harden embedded SDK paths, payload sizes, development roots and server shutdown.
+- Repair parallel Make dependencies, bind test ports to loopback, remove Docker socket,
+  and require reusable CI before release builds; generated releases remain drafts.
+- Use a fork Plugin ID and update origin, preserve MIT attribution and module imports.
+- Upgrade Go to 1.26.10 and x/net/text/sys/sync based on govulncheck findings.
+- Add regression/race/fuzz/UI tests and isolated dual-stack E2E runner instructions.
+
 # Changelog
 
 ## v1.2.4

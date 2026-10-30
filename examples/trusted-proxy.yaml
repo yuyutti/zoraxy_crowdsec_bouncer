@@ -1,0 +1,14 @@
+# CrowdSec Bouncer - yuyutti fork v1.2.4-1
+api_key: <CROWDSEC_BOUNCER_API_KEY>
+agent_url: http://127.0.0.1:8080
+stream_update_frequency: 10s
+log_level: warning
+is_proxied_behind_cloudflare: true
+# Empty lists trust no arbitrary forwarding peers.
+trusted_proxies:
+    - 10.20.0.5/32
+    - fd00:20::5/128
+cloudflare_trusted_relays: []
+block_response:
+    status_code: 403
+    page: default

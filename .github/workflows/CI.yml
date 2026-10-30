@@ -1,47 +1,48 @@
 name: CI
-
 on:
-  push:
-    branches:
-      - main
-  pull_request:
-    branches:
-      - main
-
-concurrency:
-  group: ci-${{ github.ref }}
-  cancel-in-progress: true
-
+    push:
+        branches: ['**']
+    pull_request:
+        branches: [main]
+    workflow_dispatch:
+    workflow_call:
 permissions:
-  contents: read
-
+    contents: read
+concurrency:
+    group: ci-${{ github.workflow }}-${{ github.ref }}
+    cancel-in-progress: true
 jobs:
-  build:
-    runs-on: ubuntu-latest
-
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-
-      - name: Set up Go
-        uses: actions/setup-go@v4
-        with:
-          go-version-file: 'go.mod'
-
-      - name: Install dependencies
-        run: go mod download
-
-      - name: Build the application
-        run: go build -v ./...
-
-      - name: Run tests
-        run: go test ./... -v
-
-      - name: Lint code
-        run: go vet ./...
-
-      - name: install staticcheck
-        run: go install honnef.co/go/tools/cmd/staticcheck@latest
-
-      - name: Run staticcheck
-        run: staticcheck ./...
+    checks:
+        if: github.repository == 'yuyutti/zoraxy_crowdsec_bouncer'
+        runs-on: ubuntu-latest
+        steps:
+            - uses: actions/checkout@v4
+            - uses: actions/setup-go@v5
+              with:
+                  go-version-file: go.mod
+            - uses: actions/setup-node@v4
+              with:
+                  node-version: '22'
+            - run: go mod download
+            - run: go test ./... -coverprofile=coverage.out
+            - run: go test -race ./...
+            - run: go vet ./...
+            - run: go build ./...
+            - run: python3 tools/check_introspection.py
+            - run: python3 tools/verify_release.py
+            - run: make -n test-env-ready
+            - run: make -n -j8 test-env-ready
+            - run: go install honnef.co/go/tools/cmd/staticcheck@v0.8.2
+            - run: staticcheck ./...
+            - run: go install golang.org/x/vuln/cmd/govulncheck@v1.9.0
+            - run: govulncheck ./...
+            - run: go test ./mod/utils -run '^$' -fuzz FuzzIPResolver -fuzztime 10s
+            - run: go test ./mod/zoraxy_plugin -run '^$' -fuzz FuzzSniffPayload -fuzztime 10s
+            - run: go test ./mod/dynamiccapture -run '^$' -fuzz FuzzBlockRequest -fuzztime 10s
+            - run: node --test tools/ui.test.cjs
+    binaries:
+        needs: checks
+        uses: ./.github/workflows/build.yml
+    integration:
+        needs: checks
+        uses: ./.github/workflows/E2E.yml

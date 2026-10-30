@@ -1,0 +1,30 @@
+name: Isolated Docker E2E
+'on':
+    workflow_dispatch:
+    workflow_call:
+permissions:
+    contents: read
+jobs:
+    e2e:
+        runs-on: ubuntu-latest
+        timeout-minutes: 20
+        strategy:
+            fail-fast: false
+            matrix:
+                payload:
+                    - legacy
+                    - resolved-client-ip
+        steps:
+            -   uses: actions/checkout@v4
+            -   uses: actions/setup-go@v5
+                with:
+                    go-version-file: go.mod
+            -   name: Build pinned resolved-client-ip Zoraxy
+                if: matrix.payload == 'resolved-client-ip'
+                run: |
+                    docker build -f tools/Dockerfile.zoraxy-test -t zoraxy-bouncer-e2e:resolved .
+                    echo 'ZORAXY_IMAGE=zoraxy-bouncer-e2e:resolved' >> "$GITHUB_ENV"
+            -   run: make e2e
+            -   name: Stop isolated stack
+                if: always()
+                run: docker compose --profile e2e down

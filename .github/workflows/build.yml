@@ -1,0 +1,58 @@
+name: Distribution binaries
+on:
+    workflow_call:
+permissions:
+    contents: read
+jobs:
+    build:
+        if: github.repository == 'yuyutti/zoraxy_crowdsec_bouncer'
+        runs-on: ubuntu-latest
+        strategy:
+            fail-fast: false
+            matrix:
+                target:
+                    - asset: zoraxycrowdsecbouncer_linux_386
+                      goos: linux
+                      goarch: '386'
+                    - asset: zoraxycrowdsecbouncer_linux_amd64
+                      goos: linux
+                      goarch: amd64
+                    - asset: zoraxycrowdsecbouncer_linux_arm
+                      goos: linux
+                      goarch: arm
+                      goarm: '7'
+                    - asset: zoraxycrowdsecbouncer_linux_arm64
+                      goos: linux
+                      goarch: arm64
+                    - asset: zoraxycrowdsecbouncer_linux_mipsle
+                      goos: linux
+                      goarch: mipsle
+                    - asset: zoraxycrowdsecbouncer_linux_riscv64
+                      goos: linux
+                      goarch: riscv64
+                    - asset: zoraxycrowdsecbouncer_windows_amd64.exe
+                      goos: windows
+                      goarch: amd64
+        steps:
+            - uses: actions/checkout@v4
+            - uses: actions/setup-go@v5
+              with:
+                  go-version-file: go.mod
+            - name: Build ${{ matrix.target.asset }}
+              env:
+                  CGO_ENABLED: '0'
+                  GOOS: ${{ matrix.target.goos }}
+                  GOARCH: ${{ matrix.target.goarch }}
+                  GOARM: ${{ matrix.target.goarm }}
+              run: go build -trimpath -ldflags "-s -w" -o "${{ matrix.target.asset }}" .
+            - name: Generate checksum
+              env:
+                  ASSET: ${{ matrix.target.asset }}
+              run: sha256sum "$ASSET" > "$ASSET.sha256"
+            - uses: actions/upload-artifact@v4
+              with:
+                  name: ${{ matrix.target.asset }}
+                  path: |
+                      ${{ matrix.target.asset }}
+                      ${{ matrix.target.asset }}.sha256
+                  if-no-files-found: error

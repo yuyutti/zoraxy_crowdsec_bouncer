@@ -1,262 +1,115 @@
 package utils
 
 import (
-	"maps"
-	"testing"
-
 	plugin "github.com/AnthonyMichaelTDM/zoraxycrowdsecbouncer/mod/zoraxy_plugin"
-	"github.com/sirupsen/logrus"
+	"net/netip"
+	"strings"
+	"testing"
 )
 
-const LOG_LEVEL = logrus.WarnLevel
-
+// Old tests trusted arbitrary headers. That premise intentionally changes in
+// 1.2.4-1: untrusted peers are identified exclusively by their socket address.
 func TestGetRealIP(t *testing.T) {
+	for _, cf := range []bool{false, true} {
+		for _, key := range []string{"X-Real-IP", "X-Real-Ip", "x-real-ip", "CF-Connecting-IP", "CF-Connecting-IPv6", "X-Forwarded-For"} {
+			for _, forged := range []string{"198.51.100.2", "invalid", "", "198.51.100.2, 192.0.2.1"} {
+				r := &plugin.DynamicSniffForwardRequest{RemoteAddr: "192.0.2.10:80", Header: map[string][]string{key: {forged}}}
+				got, err := GetRealIP(nil, r, cf)
+				if err != nil || got != "192.0.2.10" {
+					t.Fatalf("untrusted %s: %q %v", key, got, err)
+				}
+			}
+		}
+	}
+}
+func TestParseIP(t *testing.T) {
+	tests := map[string]string{
+		"192.0.2.1": "192.0.2.1", " 192.0.2.1:80 ": "192.0.2.1",
+		"[2001:DB8::1]:443": "2001:db8::1", "::ffff:192.0.2.1": "192.0.2.1",
+		"2001:db8::1": "2001:db8::1",
+	}
+	for raw, want := range tests {
+		ip, err := ParseIP(raw)
+		if err != nil || ip.String() != want {
+			t.Fatalf("%s: %v %v", raw, ip, err)
+		}
+	}
+	for _, raw := range []string{"", "invalid", "fe80::1%eth0", "[fe80::1%eth0]:80", "192.0.2.1,192.0.2.2", "0.0.0.0", "ff02::1"} {
+		if _, err := ParseIP(raw); err == nil {
+			t.Fatalf("accepted %q", raw)
+		}
+	}
+}
+func TestClientIPAndNil(t *testing.T) {
+	if _, err := GetRealIP(nil, nil, false); err == nil {
+		t.Fatal("nil request accepted")
+	}
+	r := &plugin.DynamicSniffForwardRequest{ClientIP: "::ffff:192.0.2.1", RemoteAddr: "invalid", Header: map[string][]string{"X-Real-Ip": {"198.51.100.1"}}}
+	if got, err := GetRealIP(nil, r, false); err != nil || got != "192.0.2.1" {
+		t.Fatalf("client_ip overwritten: %s %v", got, err)
+	}
+	r.ClientIP = "invalid"
+	r.RemoteAddr = "192.0.2.1"
+	if _, err := GetRealIP(nil, r, false); err == nil {
+		t.Fatal("invalid authoritative client_ip silently fell back")
+	}
+	r.ClientIP = ""
+	r.Header = nil
+	if _, err := GetRealIP(nil, r, false); err != nil {
+		t.Fatal(err)
+	}
+}
+func TestTrustedForwarding(t *testing.T) {
+	resolver := IPResolver{Trusted: []netip.Prefix{netip.MustParsePrefix("10.0.0.0/8")}, Cloudflare: true}
 	tests := []struct {
-		name       string
-		remoteAddr string
-		headers    map[string][]string
-		isProxied  bool
-		expected   string
+		header map[string][]string
+		want   string
+		bad    bool
 	}{
-		{
-			name:       "Basic IP without headers",
-			remoteAddr: "192.168.1.100",
-			headers:    map[string][]string{},
-			isProxied:  false,
-			expected:   "192.168.1.100",
-		},
-		{
-			name:       "IP with port, no headers",
-			remoteAddr: "192.168.1.100:8080",
-			headers:    map[string][]string{},
-			isProxied:  false,
-			expected:   "192.168.1.100",
-		},
-		{
-			name:       "IPv6 with port",
-			remoteAddr: "[2001:db8::1]:8080",
-			headers:    map[string][]string{},
-			isProxied:  false,
-			expected:   "2001:db8::1",
-		},
-		{
-			name:       "X-Real-IP header takes precedence",
-			remoteAddr: "192.168.1.100:8080",
-			headers: map[string][]string{
-				"X-Real-IP": {"10.0.0.5"},
-			},
-			isProxied: false,
-			expected:  "10.0.0.5",
-		},
-		{
-			name:       "X-Real-IP with port",
-			remoteAddr: "192.168.1.100:8080",
-			headers: map[string][]string{
-				"X-Real-IP": {"10.0.0.5:9090"},
-			},
-			isProxied: false,
-			expected:  "10.0.0.5",
-		},
-		{
-			name:       "CF-Connecting-IP when X-Real-IP is empty",
-			remoteAddr: "192.168.1.100:8080",
-			headers: map[string][]string{
-				"X-Real-IP":        {""},
-				"CF-Connecting-IP": {"203.0.113.10"},
-			},
-			isProxied: true,
-			expected:  "203.0.113.10",
-		},
-		{
-			name:       "CF-Connecting-IP when X-Real-IP is nil",
-			remoteAddr: "192.168.1.100:8080",
-			headers: map[string][]string{
-				"X-Real-IP":        nil,
-				"CF-Connecting-IP": {"203.0.113.10"},
-			},
-			isProxied: true,
-			expected:  "203.0.113.10",
-		},
-		{
-			name:       "CF-Connecting-IP with port",
-			remoteAddr: "192.168.1.100:8080",
-			headers: map[string][]string{
-				"CF-Connecting-IP": {"203.0.113.10:443"},
-			},
-			isProxied: true,
-			expected:  "203.0.113.10",
-		},
-		{
-			name:       "CF-Connecting-IP with port, different casing",
-			remoteAddr: "192.168.1.100:8080",
-			headers: map[string][]string{
-				"cf-connecting-ip": {"203.0.113.10:443"},
-			},
-			isProxied: true,
-			expected:  "203.0.113.10",
-		},
-		{
-			name:       "CF-Connecting-IP takes precedence over X-Real-IP when behind Cloudflare",
-			remoteAddr: "192.168.1.100:8080",
-			headers: map[string][]string{
-				// Cloudflare -> WAF -> Zoraxy: the WAF sets X-Real-IP to its
-				// peer, a Cloudflare edge address; only CF-Connecting-IP is the visitor.
-				"X-Real-IP":        {"172.70.0.10"},
-				"CF-Connecting-IP": {"203.0.113.10"},
-			},
-			isProxied: true,
-			expected:  "203.0.113.10",
-		},
-		{
-			name:       "X-Real-IP still takes precedence over CF-Connecting-IP when not behind Cloudflare",
-			remoteAddr: "192.168.1.100:8080",
-			headers: map[string][]string{
-				"X-Real-IP":        {"10.0.0.5"},
-				"CF-Connecting-IP": {"203.0.113.10"},
-			},
-			isProxied: false,
-			expected:  "10.0.0.5",
-		},
-		{
-			name:       "X-Real-IP used when behind Cloudflare but CF-Connecting-IP is missing",
-			remoteAddr: "192.168.1.100:8080",
-			headers: map[string][]string{
-				"X-Real-IP": {"10.0.0.5"},
-			},
-			isProxied: true,
-			expected:  "10.0.0.5",
-		},
-		{
-			name:       "CF-Connecting-IP takes precedence over X-Forwarded-For",
-			remoteAddr: "192.168.1.100:8080",
-			headers: map[string][]string{
-				"CF-Connecting-IP": {"203.0.113.10"},
-				"X-Forwarded-For":  {"1.2.3.4"},
-			},
-			isProxied: true,
-			expected:  "203.0.113.10",
-		},
-		{
-			name:       "Multiple colons in IPv6 address",
-			remoteAddr: "2001:db8:85a3:8d3:1319:8a2e:370:7348",
-			headers:    map[string][]string{},
-			isProxied:  false,
-			expected:   "2001:db8:85a3:8d3:1319:8a2e:370:7348",
-		},
-		{
-			name:       "Header with IPv6",
-			remoteAddr: "192.168.1.100:8080",
-			headers: map[string][]string{
-				"X-Real-IP": {"2001:db8::1"},
-			},
-			isProxied: false,
-			expected:  "2001:db8::1",
-		},
-		{
-			name:       "Header with IPv6 and port",
-			remoteAddr: "192.168.1.100:8080",
-			headers: map[string][]string{
-				"X-Real-IP": {"[2001:db8::1]:443"},
-			},
-			isProxied: false,
-			expected:  "2001:db8::1",
-		},
-		{
-			name:       "X-Forwarded-For with multiple IPs",
-			remoteAddr: "",
-			headers: map[string][]string{
-				"X-Forwarded-For": {"1.2.3.4", "5.6.7.8"},
-			},
-			isProxied: false,
-			expected:  "1.2.3.4",
-		},
-		{
-			name:       "X-Forwarded-For with multiple IPs one string",
-			remoteAddr: "",
-			headers: map[string][]string{
-				"X-Forwarded-For": {"1.2.3.4, 5.6.7.8"},
-			},
-			isProxied: false,
-			expected:  "1.2.3.4",
-		},
-		{
-			name:       "X-Forwarded-For with single IP",
-			remoteAddr: "",
-			headers: map[string][]string{
-				"X-Forwarded-For": {"1.2.3.4"},
-			},
-			isProxied: false,
-			expected:  "1.2.3.4",
-		},
+		{map[string][]string{"X-Real-Ip": {"192.0.2.1"}}, "192.0.2.1", false},
+		{map[string][]string{"x-real-ip": {"[2001:db8::1]:80"}}, "2001:db8::1", false},
+		{map[string][]string{"X-Forwarded-For": {"198.51.100.9, 192.0.2.1, 10.0.0.2"}}, "192.0.2.1", false},
+		{map[string][]string{"X-Forwarded-For": {"198.51.100.9, 192.0.2.1"}}, "192.0.2.1", false},
+		{map[string][]string{"CF-Connecting-IP": {"198.51.100.9"}}, "10.0.0.1", false},
+		{map[string][]string{"X-Real-IP": {"192.0.2.1"}, "x-real-ip": {"192.0.2.1"}}, "", true},
+		{map[string][]string{"X-Real-IP": {"192.0.2.1", "192.0.2.2"}}, "", true},
+		{map[string][]string{"X-Real-IP": {"192.0.2.1, 192.0.2.2"}}, "", true},
+		{map[string][]string{"X-Forwarded-For": {"10.0.0.2"}}, "", true},
+		{map[string][]string{"X-Forwarded-For": {"invalid, 192.0.2.1"}}, "", true},
+		{map[string][]string{"X-Forwarded-For": {strings.Repeat("10.0.0.2,", 32) + "192.0.2.1"}}, "", true},
+		{map[string][]string{"X-Forwarded-For": {"192.0.2.1"}, "X-Real-IP": {"192.0.2.2"}}, "", true},
 	}
-
 	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			// Create a mock DynamicSniffForwardRequest
-			dsfr := &plugin.DynamicSniffForwardRequest{
-				RemoteAddr: tt.remoteAddr,
-				Header:     make(map[string][]string),
-			}
-			maps.Copy(dsfr.Header, tt.headers)
-
-			// Create a logger
-			logger := logrus.StandardLogger()
-			logger.SetLevel(LOG_LEVEL)
-
-			// Call the function
-			result, err := GetRealIP(logger, dsfr, tt.isProxied)
-			if err != nil {
-				t.Errorf("GetRealIP() error = %v", err)
-			}
-
-			// Check the result
-			if result != tt.expected {
-				t.Errorf("GetRealIP() = %q, expected %q", result, tt.expected)
-			}
-		})
+		got, err := resolver.Resolve(&plugin.DynamicSniffForwardRequest{RemoteAddr: "10.0.0.1:80", Header: tt.header})
+		if (err != nil) != tt.bad || (!tt.bad && got != tt.want) {
+			t.Fatalf("%v: %q %v", tt.header, got, err)
+		}
 	}
 }
-
-// Benchmark the GetRealIP function
-func BenchmarkGetRealIP(b *testing.B) {
-	dsfr := &plugin.DynamicSniffForwardRequest{
-		RemoteAddr: "192.168.1.100:8080",
-		Header:     map[string][]string{"X-Real-IP": {"10.0.0.5"}},
-	}
-
-	// Create a logger
-	logger := logrus.StandardLogger()
-	logger.SetLevel(LOG_LEVEL)
-
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
-		GetRealIP(logger, dsfr, false)
+func TestCloudflare(t *testing.T) {
+	for _, peer := range []string{"173.245.48.1:80", "[2606:4700::1]:80", "10.0.0.1:80"} {
+		resolver := IPResolver{Cloudflare: true, CloudflareRelays: []netip.Prefix{netip.MustParsePrefix("10.0.0.1/32")}}
+		r := &plugin.DynamicSniffForwardRequest{RemoteAddr: peer, Header: map[string][]string{"cf-connecting-ip": {"192.0.2.1"}, "X-Real-IP": {"invalid"}}}
+		got, err := resolver.Resolve(r)
+		if err != nil || got != "192.0.2.1" {
+			t.Fatalf("CF %s: %s %v", peer, got, err)
+		}
+		r.Header["cf-connecting-ip"] = []string{"240.0.0.1"}
+		r.Header["CF-Connecting-IPv6"] = []string{"2001:db8::1"}
+		got, err = resolver.Resolve(r)
+		if err != nil || got != "2001:db8::1" {
+			t.Fatalf("pseudo: %s %v", got, err)
+		}
+		delete(r.Header, "CF-Connecting-IPv6")
+		if _, err = resolver.Resolve(r); err == nil {
+			t.Fatal("missing original IPv6 accepted")
+		}
 	}
 }
-
-// Test edge cases and error conditions
-func TestGetRealIPEdgeCases(t *testing.T) {
-	t.Run("Nil request should not panic", func(t *testing.T) {
-		defer func() {
-			if r := recover(); r != nil {
-				t.Errorf("GetRealIP panicked with nil request: %v", r)
-			}
-		}()
-
-		dsfr := &plugin.DynamicSniffForwardRequest{
-			RemoteAddr: "192.168.1.100:8080",
-		}
-
-		// Create a logger
-		logger := logrus.StandardLogger()
-		logger.SetLevel(LOG_LEVEL)
-
-		result, err := GetRealIP(logger, dsfr, false)
-		if err != nil {
-			t.Errorf("GetRealIP returned an error: %v", err)
-		}
-		if result != "192.168.1.100" {
-			t.Errorf("Expected fallback to RemoteAddr, got %q", result)
-		}
+func FuzzIPResolver(f *testing.F) {
+	f.Add("192.0.2.1:80", "invalid")
+	f.Fuzz(func(t *testing.T, peer, header string) {
+		r := &plugin.DynamicSniffForwardRequest{RemoteAddr: peer, Header: map[string][]string{"X-Real-IP": {header}}}
+		_, _ = GetRealIP(nil, r, true)
 	})
 }

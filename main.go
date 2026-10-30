@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"os"
 	"strings"
+	"time"
 
 	"github.com/AnthonyMichaelTDM/zoraxycrowdsecbouncer/mod/config"
 	"github.com/AnthonyMichaelTDM/zoraxycrowdsecbouncer/mod/decisions"
@@ -22,58 +23,33 @@ import (
 	"golang.org/x/sync/errgroup"
 )
 
-func startBouncer(g *errgroup.Group, ctx context.Context, pluginConfig *config.PluginConfig, logger *logrus.Logger, decisionCache *decisions.Cache, metricsHandler *metrics.MetricsHandler) {
-
-	// Initialize the CrowdSec stream bouncer. It keeps the decision cache local
-	// and only requests deltas from LAPI at the configured interval.
+func startBouncer(g *errgroup.Group, ctx context.Context, cfg *config.PluginConfig, logger *logrus.Logger, cache *decisions.Cache, mh *metrics.MetricsHandler) error {
 	bouncer := &csbouncer.StreamBouncer{
-		APIKey:              pluginConfig.APIKey,
-		APIUrl:              pluginConfig.AgentUrl,
-		UserAgent:           info.BOUNCER_USER_AGENT,
-		TickerInterval:      pluginConfig.StreamUpdateFrequency,
-		Scopes:              []string{"ip", "range"},
-		RetryInitialConnect: true,
+		APIKey: cfg.APIKey, APIUrl: cfg.AgentUrl, UserAgent: info.BOUNCER_USER_AGENT,
+		TickerInterval: cfg.StreamUpdateFrequency, Scopes: []string{"ip", "range"},
 	}
 	if err := bouncer.Init(); err != nil {
-		logger.Fatalf("unable to initialize bouncer: %v", err)
+		return fmt.Errorf("unable to initialize bouncer")
 	}
-
+	// Keep one stream consumer/key. The dependency's Run does not reset Startup
+	// after an outage; our polling loop explicitly requests a replacement then.
 	g.Go(func() error {
-		if err := bouncer.Run(ctx); err != nil && !errors.Is(err, context.Canceled) {
-			return err
-		}
-		return nil
+		return runDecisionSync(ctx, bouncer, cache, bouncer.TickerIntervalDuration)
 	})
-
 	g.Go(func() error {
+		ticker := time.NewTicker(time.Second)
+		defer ticker.Stop()
 		for {
 			select {
 			case <-ctx.Done():
 				return nil
-			case update, ok := <-bouncer.Stream:
-				if !ok {
-					return nil
-				}
-				decisionCache.Apply(update)
+			case <-ticker.C:
+				cache.Expire()
 			}
 		}
 	})
-
-	// initialize and start a metrics provider
-	metricsProvider, err := csbouncer.NewMetricsProvider(
-		bouncer.APIClient,
-		info.BOUNCER_TYPE,
-		metricsHandler.MetricsUpdater,
-		logger,
-	)
-	if err != nil {
-		logger.Fatalf("unable to initialize metrics provider: %v", err)
-		panic(err)
-	}
-
-	g.Go(func() error {
-		return metricsProvider.Run(ctx)
-	})
+	g.Go(func() error { runMetrics(ctx, bouncer.APIClient, mh, logger, 15*time.Minute); return nil })
+	return nil
 }
 
 func main() {
@@ -87,6 +63,7 @@ func main() {
 		Description:   info.PLUGIN_DESCRIPTION,
 		URL:           info.PLUGIN_URL,
 		Type:          plugin.PluginType_Router,
+		Version:       info.VERSION_STRING,
 		VersionMajor:  info.VERSION_MAJOR,
 		VersionMinor:  info.VERSION_MINOR,
 		VersionPatch:  info.VERSION_PATCH,
@@ -99,7 +76,8 @@ func main() {
 	runtimeCfg, err := plugin.ServeAndRecvSpec(pluginIntoSpect)
 	if err != nil {
 		//Terminate or enter standalone mode here
-		panic(err)
+		fmt.Fprintln(os.Stderr, "Plugin initialization failed")
+		os.Exit(1)
 	}
 
 	// load the configuration
@@ -107,10 +85,11 @@ func main() {
 	if err := pluginConfig.LoadConfig(); err != nil {
 		if errors.Is(err, config.ErrConfigCreated) {
 			fmt.Fprintf(os.Stderr, "%v\n", err)
-			return
 		}
-		fmt.Fprintf(os.Stderr, "Error loading configuration: %v\n", err)
-		panic(err)
+		if !errors.Is(err, config.ErrConfigCreated) {
+			fmt.Fprintf(os.Stderr, "Error loading configuration: %v\n", err)
+			os.Exit(1)
+		}
 	}
 
 	// initialize the logger
@@ -121,7 +100,7 @@ func main() {
 	onboardingMode := len(missingFields) > 0
 	configStatus := web.ConfigStatusResponse{
 		Onboarding:      onboardingMode,
-		BlockingEnabled: !onboardingMode,
+		BlockingEnabled: false,
 	}
 	if onboardingMode {
 		configStatus.MissingFields = missingFields
@@ -146,9 +125,13 @@ func main() {
 	metrics.Map.MustRegisterAll()
 	prometheus.MustRegister(csbouncer.TotalLAPICalls, csbouncer.TotalLAPIError)
 
-	if !onboardingMode {
-		startBouncer(g, ctx, pluginConfig, logger, decisionCache, metricsHandler)
+	blockHandler, pageErr := dynamiccapture.NewBlockHandler(pluginConfig.BlockResponse, pluginConfig.ConfigPath)
+	if pageErr != nil {
+		logger.Error("Custom block page unavailable; using 403 Forbidden fallback")
 	}
+	web.SetStatusCounts(func() (int, uint64, uint64) {
+		return decisionCache.ActiveCount(), metricsHandler.IPResolutionErrors.Load(), decisionCache.InvalidCount()
+	})
 
 	/*
 		Dynamic Captures
@@ -162,14 +145,21 @@ func main() {
 		return dynamiccapture.SniffHandler(logger, metricsHandler, pluginConfig, dsfr, decisionCache)
 	})
 	pathRouter.RegisterDynamicCaptureHandle(info.DYNAMIC_CAPTURE_INGRESS, http.DefaultServeMux, func(w http.ResponseWriter, r *http.Request) {
-		dynamiccapture.CaptureHandler(logger, w, r)
+		blockHandler.ServeHTTP(w, r)
 	})
 
 	web.InitWebServer(logger, g, ctx, runtimeCfg.Port, configStatus)
+	if !onboardingMode {
+		if err := startBouncer(g, ctx, pluginConfig, logger, decisionCache, metricsHandler); err != nil {
+			web.SetError("initialization")
+			logger.Error("Bouncer initialization failed")
+		}
+	}
 
 	// Handle signals
 	utils.StartSignalHandler(logger, g, ctx)
 
+	defer web.SetStopped()
 	// wait for the goroutines to finish
 	if err := g.Wait(); err != nil && !(errors.Is(err, utils.SignalTermError) || errors.Is(err, utils.SignalIntError)) {
 		fmt.Printf("Process terminated with error of type %T: %v\n", err, err)
