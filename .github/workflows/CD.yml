@@ -77,6 +77,9 @@ jobs:
                           if (object.sha !== commit) throw new Error('Tag points to a different SHA');
                       } catch (error) {
                           if (error.status !== 404) throw error;
+                          if (context.eventName !== 'workflow_dispatch') throw new Error('Expected version tag does not exist');
+                          // Manual publication creates the tag only after verify succeeds.
+                          await github.rest.git.createRef({owner, repo, ref: `refs/tags/${tag}`, sha: commit});
                       }
                       const existing = await github.rest.repos.listReleases({owner, repo, per_page: 100});
                       if (existing.data.some(release => release.tag_name === tag)) {
@@ -85,7 +88,10 @@ jobs:
                       const files = fs.readdirSync('dist').sort();
                       const notes = fs.readFileSync('dist/release-notes.md', 'utf8');
                       const release = (await github.rest.repos.createRelease({
-                          owner, repo, tag_name: tag, target_commitish: commit,
+                          // The exact tag has already been resolved/created above. Supplying
+                          // target_commitish is unnecessary and can require workflow-write
+                          // permission when a work branch changes workflow files.
+                          owner, repo, tag_name: tag,
                           name: tag, body: notes, draft: true, prerelease,
                           make_latest: 'false'
                       })).data;

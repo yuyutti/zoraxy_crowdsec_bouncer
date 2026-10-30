@@ -52,7 +52,9 @@ docker compose --profile e2e down
 
 This builds a Linux plugin, creates a test LAPI key without printing it, writes
 private local config, applies the fork Plugin ID to `protected`, starts a static
-dual-stack client, and runs `tools/e2e.py`. The script checks curl's actual local
+dual-stack client, and runs `tools/e2e.py`. The script uses HTTPS with local test-certificate verification disabled and explicit
+localhost SNI via curl --connect-to; it does not follow the global HTTP redirect
+and mistake it for an upstream response. It checks curl's actual local
 IPv4/IPv6 addresses separately, unbanned upstream access, 403 default, forged
 headers, 418 Evil, removal, expiry during an outage, recovery, missing custom page
 fallback and public UI/RPC isolation. It restores config and removes only decisions

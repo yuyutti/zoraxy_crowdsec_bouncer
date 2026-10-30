@@ -66,7 +66,7 @@ test-env-logs:
 
 test-env-status:
 	@echo "Zoraxy UI: http://127.0.0.1:8000"
-	@echo "Test route through Zoraxy: http://localhost:18080"
+	@echo "Test route through Zoraxy: https://localhost:8443"
 	@echo "Direct upstream through compose network: http://test_webserver:5678"
 	@echo "Plugin config path: $(PLUGIN_CONFIG)"
 
