@@ -41,7 +41,9 @@ that prefix's candidates until the periodic sweep removes them.
 ## Docker E2E
 
 Use an isolated Linux runner with Docker Compose, IPv6 bridge support and the
-listed tools. All published test ports bind to 127.0.0.1. The default stack does
+listed tools. All published test ports bind to 127.0.0.1. The preloaded fixture uses the modern ActiveOrigins schema, so the test-only
+container sets CFGUPGRADE=false to prevent a missing version marker being treated
+as a 3.0.7 migration. Production upgrade settings are not changed. The default stack does
 not mount Docker's socket. An IPv6 failure is an error, not a passed test.
 
 ```sh

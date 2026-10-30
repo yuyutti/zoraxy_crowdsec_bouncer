@@ -58,7 +58,7 @@ def expect(family, code, fragment, *headers):
         except (subprocess.CalledProcessError, ValueError):
             pass
         time.sleep(1)
-    raise AssertionError((family, code, fragment, last))
+    raise AssertionError((family, code, fragment, None if last is None else (last[0], last[1][:256])))
 
 def decision_ids(value):
     if isinstance(value, dict):
@@ -81,6 +81,12 @@ def ban(ip, duration='2m'):
 original = CONFIG.read_bytes()
 try:
     run('--profile', 'e2e', 'up', '-d', 'test_client')
+    # Verify the container did not migrate our modern bootstrap as a legacy file.
+    run('exec', '-T', 'zoraxy', 'python3', '-c',
+        "import json; p=json.load(open('/opt/zoraxy/config/conf/proxy/localhost.config')); "
+        "assert p['ProxyType']==1 and p['RootOrMatchingDomain']=='localhost'; "
+        "assert p['ActiveOrigins'][0]['OriginIpOrDomain']=='crowdsec-bouncer-test-webserver:5678'; "
+        "assert p['Tags']==['protected']")
     print('Checking actual IPv4/IPv6 HTTPS pass-through', flush=True)
     for family in (4, 6):
         expect(family, 200, 'E2E test server is reachable')
