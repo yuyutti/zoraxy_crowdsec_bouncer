@@ -55,8 +55,12 @@ def expect(family, code, fragment, *headers):
             last = request(family, *headers)
             if last[0] == code and fragment in last[1]:
                 return
-        except (subprocess.CalledProcessError, ValueError):
-            pass
+        except subprocess.CalledProcessError as error:
+            # Only this fixed test curl command reaches here; include bounded
+            # transport errors, never configuration files or request credentials.
+            last = ('curl-exit-' + str(error.returncode), (error.stderr or '')[:256])
+        except ValueError:
+            last = ('invalid-curl-metadata', '')
         time.sleep(1)
     raise AssertionError((family, code, fragment, None if last is None else (last[0], last[1][:256])))
 

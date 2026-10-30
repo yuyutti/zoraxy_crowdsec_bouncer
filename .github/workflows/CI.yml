@@ -37,9 +37,9 @@ jobs:
             - run: staticcheck ./...
             - run: go install golang.org/x/vuln/cmd/govulncheck@v1.9.0
             - run: govulncheck ./...
-            - run: go test ./mod/utils -run '^$' -fuzz FuzzIPResolver -fuzztime 10s -parallel 4
-            - run: go test ./mod/zoraxy_plugin -run '^$' -fuzz FuzzSniffPayload -fuzztime 10s -parallel 4
-            - run: go test ./mod/dynamiccapture -run '^$' -fuzz FuzzBlockRequest -fuzztime 10s -parallel 4
+            - run: go test ./mod/utils -run '^$' -fuzz FuzzIPResolver -fuzztime 1000000x -parallel 4 -timeout 5m
+            - run: go test ./mod/zoraxy_plugin -run '^$' -fuzz FuzzSniffPayload -fuzztime 1000000x -parallel 4 -timeout 5m
+            - run: go test ./mod/dynamiccapture -run '^$' -fuzz FuzzBlockRequest -fuzztime 1000000x -parallel 4 -timeout 5m
             - run: node --test tools/ui.test.cjs
     binaries:
         needs: checks

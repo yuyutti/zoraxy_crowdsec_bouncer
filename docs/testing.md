@@ -72,8 +72,9 @@ ZORAXY_IMAGE=zoraxy-bouncer-e2e:resolved make e2e
 ```
 
 The Dockerfile pins Zoraxy commit
-`cde44510c6e4e22e2b108314cfa1b659eb4f550f` and preserves the upstream container
-entrypoint. `.github/workflows/E2E.yml` offers both variants via workflow_dispatch and as a required reusable CI job.
+`cde44510c6e4e22e2b108314cfa1b659eb4f550f` and copies its matching upstream container
+entrypoint. The older base entrypoint passes a removed -webfm flag, so it must
+not be paired with the newer binary. `.github/workflows/E2E.yml` offers both variants via workflow_dispatch and as a required reusable CI job.
 Run it explicitly on a suitable runner; its hosted results are separate from the earlier local Windows snapshot.
 The workflow itself and the pinned source container still require their first
 Docker acceptance run. Ports must not already belong to other services.
@@ -97,3 +98,12 @@ uploaded to a draft, verified, then made public. Normal main pushes do not publi
 Introspection runs before config or external client initialization. No deployment,
 production restart, firewall change, upstream push or release publication is part
 of this verification.
+
+Hosted fuzz jobs use `-fuzztime 1000000x -parallel 4 -timeout 5m` for each target,
+requiring one million executions rather than stopping on an elapsed-time deadline.
+A hosted timed run returned only `context deadline exceeded` at its fuzztime limit;
+[Go issue 75804](https://github.com/golang/go/issues/75804) documents this class of
+fuzz deadline failure. This is consistent with that engine issue, not proof of its
+exact cause in our runner. The count form is documented by
+[cmd/go](https://pkg.go.dev/cmd/go#hdr-Testing_flags). Exit codes remain mandatory;
+no failure string is suppressed or converted to success.
